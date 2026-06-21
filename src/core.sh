@@ -4,10 +4,8 @@ protocol_list=(
     VLESS-REALITY
 )
 mainmenu=(
-    "添加配置"
     "更改配置"
     "查看配置"
-    "删除配置"
     "运行管理"
     "更新"
     "卸载"
@@ -40,10 +38,8 @@ change_list=(
     "更改 xhttp 路径"
     "重新生成 UUID"
     "重新生成密钥"
-    "更改 v4 目标地址 (v4_dest)"
-    "更改 v4 SNI (v4_sni)"
-    "更改 v6 目标地址 (v6_dest)"
-    "更改 v6 SNI (v6_sni)"
+    "更改 v4 目标域名 (SNI/Dest)"
+    "更改 v6 目标域名 (SNI/Dest)"
     "重新生成 v4 Short IDs"
     "重新生成 v6 Short IDs"
     "切换 v6only"
@@ -281,11 +277,12 @@ ask() {
         ;;
     esac
     msg $is_opt_msg
-    [[ ! $is_opt_input_msg ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m]:"
+    [[ ! $is_opt_input_msg ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m] [0 返回]:"
     [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
-        echo -ne $is_opt_input_msg
+        echo -ne "$is_opt_input_msg "
         read REPLY
+        [[ $REPLY == "0" && $is_ask_set != 'is_main_pick' ]] && exec $is_sh_bin
         [[ ! $REPLY && $is_emtpy_exit ]] && exit
         [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
         [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && $is_ask_set == 'is_main_pick' ]] && {
@@ -370,7 +367,7 @@ create() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "${v4_dest:-${v4_sni:-$is_servername}:443}",
+                    "dest": "${v4_sni:-$is_servername}:443",
                     "serverNames": [
                         "${v4_sni:-$is_servername}"
                     ],
@@ -425,7 +422,7 @@ create() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "${v6_dest:-${v6_sni:-$is_servername}:443}",
+                    "dest": "${v6_sni:-$is_servername}:443",
                     "serverNames": [
                         "${v6_sni:-$is_servername}"
                     ],
@@ -553,6 +550,8 @@ EOF
         cat <<EOF >$is_config_json
 {
     "log": {
+        "access": "/var/log/'$is_core'/access.log",
+        "error": "/var/log/'$is_core'/error.log",
         "loglevel": "warning"
     },
     "dns": {
@@ -651,26 +650,20 @@ change() {
         key | publickey | privatekey)
             is_change_id=3
             ;;
-        v4dest | v4-dest)
+        v4dest | v4-dest | v4sni | v4-sni)
             is_change_id=4
             ;;
-        v4sni | v4-sni)
+        v6dest | v6-dest | v6sni | v6-sni)
             is_change_id=5
             ;;
-        v6dest | v6-dest)
+        v4sid | v4-sid | v4shortid)
             is_change_id=6
             ;;
-        v6sni | v6-sni)
+        v6sid | v6-sid | v6shortid)
             is_change_id=7
             ;;
-        v4sid | v4-sid | v4shortid)
-            is_change_id=8
-            ;;
-        v6sid | v6-sid | v6shortid)
-            is_change_id=9
-            ;;
         v6only | v6-only)
-            is_change_id=10
+            is_change_id=8
             ;;
         *)
             [[ $is_try_change ]] && return
@@ -741,52 +734,36 @@ change() {
         add $net
         ;;
     4)
-        # new v4 dest
-        is_new_v4_dest=$3
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v4_dest ]] && ask string is_new_v4_dest "请输入新的 v4 目标地址 (dest):"
-        v4_dest=$is_new_v4_dest
-        add $net
-        ;;
-    5)
-        # new v4 sni
+        # new v4 sni/dest
         is_new_v4_sni=$3
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "请输入新的 v4 SNI:"
+        [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "请输入新的 v4 目标域名 (SNI/Dest) [0 返回]:"
         v4_sni=$is_new_v4_sni
         add $net
         ;;
-    6)
-        # new v6 dest
-        is_new_v6_dest=$3
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v6_dest ]] && ask string is_new_v6_dest "请输入新的 v6 目标地址 (dest):"
-        v6_dest=$is_new_v6_dest
-        add $net
-        ;;
-    7)
-        # new v6 sni
+    5)
+        # new v6 sni/dest
         is_new_v6_sni=$3
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "请输入新的 v6 SNI:"
+        [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "请输入新的 v6 目标域名 (SNI/Dest) [0 返回]:"
         v6_sni=$is_new_v6_sni
         add $net
         ;;
-    8)
+    6)
         # new v4 short ids
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         get_short_ids
         v4_short_ids=$is_short_ids
         add $net
         ;;
-    9)
+    7)
         # new v6 short ids
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         get_short_ids
         v6_short_ids=$is_short_ids
         add $net
         ;;
-    10)
+    8)
         # toggle v6only
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         if [[ $v6_only == 'true' ]]; then
@@ -829,8 +806,19 @@ uninstall() {
     ask string y "是否卸载 ${is_core_name}? [y]:"
     manage stop &>/dev/null
     manage disable &>/dev/null
+    
+    # Close all opened ports before deleting config
+    if [[ -d $is_conf_dir ]]; then
+        for v in $(ls $is_conf_dir | grep .json$ | sed '/dynamic-port-.*-link/d'); do
+            local p=$(jq -r '.inbounds[0].port' $is_conf_dir/"$v")
+            [[ $(is_test port $p) ]] && close_port $p
+        done
+    fi
+
     rm -rf $is_core_dir $is_log_dir $is_sh_bin /lib/systemd/system/$is_core.service /etc/init.d/$is_core
     sed -i "/$is_core/d" /root/.bashrc
+    systemctl daemon-reload &>/dev/null
+    
     [[ $is_install_sh ]] && return # reinstall
     _green "\n卸载完成!"
     msg "脚本哪里需要完善? 请反馈"
@@ -1248,45 +1236,38 @@ is_main_menu() {
     msg "================================================="
     msg "\n$(_green $is_core_ver) / $(_cyan $is_core_name script $is_sh_ver)\n"
     msg "================================================="
-    msg "\n$(_green 1.) 添加配置"
-    msg "$(_green 2.) 更改配置"
-    msg "$(_green 3.) 查看配置"
-    msg "$(_green 4.) 删除配置"
+    msg "\n$(_green 1.) 更改配置"
+    msg "$(_green 2.) 查看配置"
     msg "========================"
-    msg "$(_green 5.) 运行管理"
-    msg "$(_green 6.) 更新"
-    msg "$(_green 7.) 卸载"
+    msg "$(_green 3.) 运行管理"
+    msg "$(_green 4.) 更新"
+    msg "$(_green 5.) 卸载"
     msg "========================"
-    msg "$(_green 8.) 其他"
+    msg "$(_green 6.) 其他"
     msg "\n请选择:"
     read REPLY
+    [[ "$REPLY" == "0" ]] && exit 0
     case $REPLY in
     1)
-        add
-        ;;
-    2)
         change
         ;;
-    3)
+    2)
         info
         ;;
-    4)
-        del
-        ;;
-    5)
+    3)
         ask list is_do_manage "启动 停止 重启"
         manage $REPLY &
         msg "\n管理状态执行: $(_green $is_do_manage)\n"
         ;;
-    6)
+    4)
         is_tmp_list=("更新$is_core_name" "更新脚本")
         ask list is_do_update null "\n请选择更新:\n"
         update $REPLY
         ;;
-    7)
+    5)
         uninstall
         ;;
-    8)
+    6)
         ask list is_do_other "启用BBR 查看运行状态 查看日志 查看错误日志 测试运行 重装脚本 设置DNS 切换v6only 放行端口 关闭端口"
         case $REPLY in
         1)
