@@ -982,11 +982,22 @@ get() {
         [[ ! $uuid ]] && get_uuid && uuid=$tmp_uuid
         [[ ! $is_short_ids ]] && get_short_ids
         [[ ! $is_private_key ]] && get_pbk
-        [[ ! $is_servername && ! $v4_sni ]] && {
+        if [[ $is_new_install ]]; then
+            ask list is_route_mode "v4上行/v6下行 v6上行/v4下行" "\n请选择首选的流向模式:" "请选择 (默认: v4上行/v6下行):"
+            if [[ $is_route_mode == "v6上行/v4下行" ]]; then
+                export is_v6_uplink=1
+                touch $is_conf_dir/is_v6_uplink
+            fi
+            ask string is_new_v4_sni "请输入 v4 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            [[ $is_new_v4_sni ]] && export v4_sni=$is_new_v4_sni
+            ask string is_new_v6_sni "请输入 v6 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            [[ $is_new_v6_sni ]] && export v6_sni=$is_new_v6_sni
+        fi
+        if [[ ! $v4_sni || ! $v6_sni ]]; then
             get_random_sni
-            v4_sni=$tmp_v4_sni
-            v6_sni=$tmp_v6_sni
-        }
+            [[ ! $v4_sni ]] && v4_sni=$tmp_v4_sni
+            [[ ! $v6_sni ]] && v6_sni=$tmp_v6_sni
+        fi
         ;;
     file)
         is_file_str=$2
@@ -1092,10 +1103,28 @@ info() {
     get_ipv6
     v6_ip=${ipv6:-""}
 
+    [[ -f $is_conf_dir/is_v6_uplink ]] && is_v6_uplink=1
+    
+    if [[ $is_v6_uplink ]]; then
+        uplink_ip=$v6_ip
+        uplink_sni=$v6_sni
+        uplink_sid=$is_v6_sid
+        downlink_ip=$is_addr
+        downlink_sni=$v4_sni
+        downlink_sid=$is_v4_sid
+    else
+        uplink_ip=$is_addr
+        uplink_sni=$v4_sni
+        uplink_sid=$is_v4_sid
+        downlink_ip=$v6_ip
+        downlink_sni=$v6_sni
+        downlink_sid=$is_v6_sid
+    fi
+
     cat <<EOF
 - name: $is_config_name
   type: vless
-  server: "$is_addr"
+  server: "$uplink_ip"
   port: $port
   uuid: $uuid
   network: xhttp
@@ -1105,20 +1134,20 @@ info() {
   mptcp: true
   packet-encoding: xudp
   encryption: none
-  servername: $v4_sni
+  servername: $uplink_sni
   client-fingerprint: chrome
   alpn:
     - h2
   reality-opts:
     public-key: $is_public_key
-    short-id: $is_v4_sid
+    short-id: $uplink_sid
   sockopt:
     tcp-fast-open: true
     tcp-no-delay: true
     tcp-mptcp: true
   xhttp-opts:
     mode: stream-up
-    host: $v4_sni
+    host: $uplink_sni
     path: $v4_path
     no-grpc-header: false
     no-sse-header: false

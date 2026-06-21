@@ -182,7 +182,7 @@ download() {
     esac
 
     msg warn "下载 ${name} > ${link}"
-    if _wget -t 3 -q -c $link -O $tmpfile; then
+    if _wget -t 3 -q --show-progress -c $link -O $tmpfile; then
         mv -f $tmpfile $is_ok
     fi
 }
@@ -219,11 +219,10 @@ check_status() {
     else
         [[ ! $is_fail ]] && {
             is_wget=1
-            [[ ! $is_core_file ]] && download core &
-            [[ ! $local_install ]] && download sh &
-            [[ $jq_not_found ]] && download jq &
+            [[ ! $is_core_file ]] && download core
+            [[ ! $local_install ]] && download sh
+            [[ $jq_not_found ]] && download jq
             get_ip
-            wait
             check_status
         }
     fi
