@@ -182,6 +182,41 @@ is_port_used() {
     msg "请执行: $(_yellow "${cmd} update -y; ${cmd} install net-tools -y") 来修复此问题."
 }
 
+save_iptables() {
+    if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
+        iptables-save > /etc/iptables/rules.v4
+        [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
+    elif [[ $(type -P netfilter-persistent) ]]; then
+        netfilter-persistent save &>/dev/null
+    fi
+}
+
+open_port() {
+    local p=$1
+    if [[ $(type -P iptables) ]]; then
+        iptables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
+        iptables -I INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+    fi
+    if [[ $(type -P ip6tables) ]]; then
+        ip6tables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
+        ip6tables -I INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+    fi
+    save_iptables
+}
+
+close_port() {
+    local p=$1
+    if [[ $(type -P iptables) ]]; then
+        iptables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
+        iptables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+    fi
+    if [[ $(type -P ip6tables) ]]; then
+        ip6tables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
+        ip6tables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+    fi
+    save_iptables
+}
+
 # ask input a string or pick a option for list.
 ask() {
     case $1 in
@@ -487,6 +522,8 @@ EOF
         
         # save json to file
         cat <<<$is_new_json >$is_json_file
+        
+        open_port $port
         
         if [[ $is_new_install ]]; then
             create config.json
@@ -1250,33 +1287,56 @@ is_main_menu() {
         uninstall
         ;;
     8)
-        ask list is_do_other "启用BBR 查看日志 查看错误日志 测试运行 重装脚本 设置DNS 切换v6only"
+        ask list is_do_other "启用BBR 查看运行状态 查看日志 查看错误日志 测试运行 重装脚本 设置DNS 切换v6only 放行端口 关闭端口"
         case $REPLY in
         1)
             load bbr.sh
             _try_enable_bbr
             ;;
         2)
-            get log
+            systemctl status $is_core --no-pager
+            echo
+            pause
             ;;
         3)
-            get logerr
+            get log
             ;;
         4)
-            get test-run
+            get logerr
             ;;
         5)
-            get reinstall
+            get test-run
             ;;
         6)
+            get reinstall
+            ;;
+        7)
             load dns.sh
             dns_set
             ;;
-        7)
+        8)
             is_try_change=1
             change test v6only
             is_change_id=21
             change
+            ;;
+        9)
+            ask string p "请输入要放行的端口 (1-65535):"
+            if [[ $(is_test port $p) ]]; then
+                open_port $p
+                _green "\n已放行端口: $p\n"
+            else
+                _red "\n无效的端口!\n"
+            fi
+            ;;
+        10)
+            ask string p "请输入要关闭的端口 (1-65535):"
+            if [[ $(is_test port $p) ]]; then
+                close_port $p
+                _green "\n已关闭端口: $p\n"
+            else
+                _red "\n无效的端口!\n"
+            fi
             ;;
         esac
         ;;
