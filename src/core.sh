@@ -1262,11 +1262,12 @@ is_main_menu() {
     msg "\n$(_green 1.) 更改配置"
     msg "$(_green 2.) 查看配置"
     msg "========================"
-    msg "$(_green 3.) 运行管理"
-    msg "$(_green 4.) 更新"
-    msg "$(_green 5.) 卸载"
+    msg "$(_green 3.) 查看运行状态"
+    msg "$(_green 4.) 运行管理"
+    msg "$(_green 5.) 更新"
+    msg "$(_green 6.) 卸载"
     msg "========================"
-    msg "$(_green 6.) 其他"
+    msg "$(_green 7.) 其他"
     msg "\n请选择:"
     read REPLY
     [[ "$REPLY" == "0" ]] && exit 0
@@ -1278,55 +1279,48 @@ is_main_menu() {
         info
         ;;
     3)
+        systemctl status $is_core -l --no-pager
+        echo
+        pause
+        ;;
+    4)
         ask list is_do_manage "启动 停止 重启"
         manage $REPLY &
         msg "\n管理状态执行: $(_green $is_do_manage)\n"
         ;;
-    4)
+    5)
         is_tmp_list=("更新$is_core_name" "更新脚本")
         ask list is_do_update null "\n请选择更新:\n"
         update $REPLY
         ;;
-    5)
+    6)
         uninstall
         ;;
-    6)
-        ask list is_do_other "启用BBR 查看运行状态 查看日志 查看错误日志 测试运行 重装脚本 修改日志等级 切换v6only 放行端口 关闭端口"
+    7)
+        ask list is_do_other "查看日志 查看错误日志 测试运行 修改日志等级 切换v6only 放行端口 关闭端口"
         case $REPLY in
         1)
-            load bbr.sh
-            _try_enable_bbr
-            ;;
-        2)
-            systemctl status $is_core -l --no-pager
-            echo
-            pause
-            ;;
-        3)
             get log
             ;;
-        4)
+        2)
             get logerr
             ;;
-        5)
+        3)
             get test-run
             ;;
-        6)
-            get reinstall
-            ;;
-        7)
+        4)
             ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
             sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
             _green "\n已将日志等级修改为: $is_log_level\n"
             manage restart &
             ;;
-        8)
+        5)
             is_try_change=1
             change test v6only
             is_change_id=21
             change
             ;;
-        9)
+        6)
             ask string p "请输入要放行的端口 (1-65535):"
             if [[ $(is_test port $p) ]]; then
                 open_port $p
@@ -1335,7 +1329,7 @@ is_main_menu() {
                 _red "\n无效的端口!\n"
             fi
             ;;
-        10)
+        7)
             ask string p "请输入要关闭的端口 (1-65535):"
             if [[ $(is_test port $p) ]]; then
                 close_port $p

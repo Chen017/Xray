@@ -421,6 +421,12 @@ main() {
     load core.sh
     # create a tcp config
     add reality
+    
+    # 启用 BBR
+    load bbr.sh
+    msg ok "正在尝试启用 BBR 优化..."
+    _try_enable_bbr
+    
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok
 }
