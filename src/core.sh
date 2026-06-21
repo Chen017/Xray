@@ -1167,19 +1167,19 @@ info() {
       h-max-reusable-secs: "1800-3000"
       h-keep-alive-period: 0
     download-settings:
-      server: "$v6_ip"
+      server: "$downlink_ip"
       port: $port
       tls: true
       alpn:
         - h2
-      servername: $v6_sni
+      servername: $downlink_sni
       client-fingerprint: firefox
       reality-opts:
         public-key: $is_public_key
-        short-id: $is_v6_sid
+        short-id: $downlink_sid
       no-grpc-header: false
       no-sse-header: false
-      host: $v6_sni
+      host: $downlink_sni
       path: $v4_path
       x-padding-bytes: "100-1000"
       x-padding-obfs-mode: true
