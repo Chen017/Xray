@@ -5,6 +5,7 @@ is_log_level_list=(
     error
     none
     del
+    set
 )
 log_set() {
     if [[ $2 ]]; then
@@ -14,6 +15,16 @@ log_set() {
         [[ ! $is_log_level_use ]] && {
             err "无法识别 log 参数: $@ \n请使用 $is_core log [${is_log_level_list[@]}] 进行相关设定.\n备注: del 参数仅临时删除 log 文件; none 参数将不会生成 log 文件."
         }
+        if [[ $is_log_level_use == 'set' ]]; then
+            ask list is_log_level_use "debug info warning error none" "\n请选择要设置的 log 等级 (默认 warning):"
+            case $REPLY in
+            1) is_log_level_use=debug ;;
+            2) is_log_level_use=info ;;
+            4) is_log_level_use=error ;;
+            5) is_log_level_use=none ;;
+            *) is_log_level_use=warning ;;
+            esac
+        fi
         case $is_log_level_use in
         del)
             rm -rf $is_log_dir/*.log

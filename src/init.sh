@@ -1,6 +1,6 @@
 #!/bin/bash
 
-author=233boy
+author=Chen017
 # github=https://github.com/233boy/xray
 
 # bash fonts colors
@@ -58,22 +58,16 @@ _wget() {
     wget --no-check-certificate "$@"
 }
 
-# yum or apt-get or apk
-cmd=$(type -P apt-get || type -P yum || type -P apk)
-
-# alpine linux
-is_alpine=
-[[ $cmd =~ apk ]] && is_alpine=1
+# yum or apt-get
+cmd=$(type -P apt-get || type -P yum)
 
 # x64
 case $(arch) in
 amd64 | x86_64)
     is_core_arch="64"
-    caddy_arch="amd64"
     ;;
 *aarch64* | *armv8*)
     is_core_arch="arm64-v8a"
-    caddy_arch="arm64"
     ;;
 *)
     err "此脚本仅支持 64 位系统..."
@@ -90,17 +84,8 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget unzip jq qrencode"
+is_pkg="wget curl unzip jq"
 is_config_json=$is_core_dir/config.json
-is_caddy_bin=/usr/local/bin/caddy
-is_caddy_dir=/etc/caddy
-is_caddy_repo=caddyserver/caddy
-is_caddyfile=$is_caddy_dir/Caddyfile
-is_caddy_conf=$is_caddy_dir/$author
-is_caddy_service=$(systemctl list-units --full -all 2>/dev/null | grep caddy.service)
-[[ $is_alpine && -f /etc/init.d/caddy ]] && is_caddy_service=1
-is_http_port=80
-is_https_port=443
 
 # core ver
 is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
@@ -110,26 +95,6 @@ if [[ $(pgrep -f $is_core_bin) ]]; then
 else
     is_core_status=$(_red_bg stopped)
     is_core_stop=1
-fi
-if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
-    is_caddy=1
-    # fix caddy run; ver >= 2.8.2 (仅 systemd)
-    [[ ! $is_alpine ]] && [[ ! $(grep '\-\-adapter caddyfile' /lib/systemd/system/caddy.service) ]] && {
-        load systemd.sh
-        install_service caddy
-        systemctl restart caddy &
-    }
-    is_caddy_ver=$($is_caddy_bin version | head -n1 | cut -d " " -f1)
-    is_tmp_http_port=$(grep -E '^ {2,}http_port|^http_port' $is_caddyfile | grep -E -o [0-9]+)
-    is_tmp_https_port=$(grep -E '^ {2,}https_port|^https_port' $is_caddyfile | grep -E -o [0-9]+)
-    [[ $is_tmp_http_port ]] && is_http_port=$is_tmp_http_port
-    [[ $is_tmp_https_port ]] && is_https_port=$is_tmp_https_port
-    if [[ $(pgrep -f $is_caddy_bin) ]]; then
-        is_caddy_status=$(_green running)
-    else
-        is_caddy_status=$(_red_bg stopped)
-        is_caddy_stop=1
-    fi
 fi
 
 load core.sh

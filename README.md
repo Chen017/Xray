@@ -1,37 +1,26 @@
 # 介绍
 
-最好用的 Xray 一键安装脚本 & 管理脚本
+精简版 Xray 一键安装脚本 & 管理脚本，支持 VLESS-REALITY + XHTTP 的 IPv4/IPv6 双栈智能分流架构。
 
 # 特点
 
 - 快速安装
-- 无敌好用
 - 零学习成本
-- 自动化 TLS
 - 简化所有流程
 - 屏蔽 BT
 - 屏蔽中国 IP
-- 使用 API 操作
 - 兼容 Xray 命令
 - 强大的快捷参数
-- 支持所有常用协议
-- 一键添加 VLESS-REALITY (默认)
-- 一键添加 Shadowsocks 2022
-- 一键添加 VMess-(TCP/mKCP)
-- 一键添加 VMess-(WS/gRPC)-TLS
-- 一键添加 VLESS-(WS/gRPC/XHTTP)-TLS
-- 一键添加 Trojan-(WS/gRPC)-TLS
-- 一键添加 VMess-(TCP/mKCP) 动态端口
+- 默认采用双栈结构：v4/v6 REALITY 入站 + XHTTP stream-up 架构
+- 支持自动回退 8443 端口
 - 一键启用 BBR
-- 一键更改伪装网站
-- 一键更改 (端口/UUID/密码/域名/路径/加密方式/SNI/动态端口/等...)
-- 还有更多...
+- 一键更改双栈详细参数 (目标地址/SNI/ShortIds/密钥/等...)
 
 # 设计理念
 
 设计理念为：**高效率，超快速，极易用**
 
-脚本基于作者的自身使用需求，以 **多配置同时运行** 为核心设计
+脚本专注于 VLESS-REALITY 双栈协议，以 **多配置同时运行** 为核心设计
 
 并且专门优化了，添加、更改、查看、删除、这四项常用功能
 
@@ -39,85 +28,62 @@
 
 例如，添加一个配置仅需不到 1 秒！瞬间完成添加！其他操作亦是如此！
 
-脚本的参数非常高效率并且超级易用，请掌握参数的使用
+# 使用
 
-# 文档
+安装完成后，使用 `xray` 命令进入主菜单，可选操作：
 
-安装及使用：https://233boy.com/xray/xray-script/
+1. 添加配置
+2. 更改配置
+3. 查看配置
+4. 删除配置
+5. 运行管理
+6. 更新
+7. 卸载
+8. 其他（启用BBR、查看日志、测试运行、重装脚本、设置DNS、切换v6only）
 
-# 帮助
-
-使用：`xray help`
+## 常用命令
 
 ```
-Xray script v1.21 by 233boy
-Usage: xray [options]... [args]...
+xray add                 添加一个配置
+xray change              更改配置
+xray del                 删除配置
+xray info                查看配置
+xray start/stop/restart  启动/停止/重启
+xray update core         更新 Xray 内核
+xray update sh           更新脚本
+xray uninstall           卸载
+```
 
-基本:
-   v, version                                      显示当前版本
-   ip                                              返回当前主机的 IP
-   pbk                                             同等于 xray x25519
-   get-port                                        返回一个可用的端口
-   ss2022                                          返回一个可用于 Shadowsocks 2022 的密码
+## 更改相关命令
 
-一般:
-   a, add [protocol] [args... | auto]              添加配置
-   c, change [name] [option] [args... | auto]      更改配置
-   d, del [name]                                   删除配置**
-   i, info [name]                                  查看配置
-   qr [name]                                       二维码信息
-   url [name]                                      URL 信息
-   log                                             查看日志
-   logerr                                          查看错误日志
+```
+xray port [name] [port | auto]                       更改端口
+xray id [name] [uuid | auto]                         重新生成 UUID
+xray key [name] [Private key | auto] [Public key]    重新生成密钥
+xray v4dest [name] [domain]                          更改 v4 目标地址
+xray v4sni [name] [domain]                           更改 v4 SNI
+xray v4path [name] [path]                            更改 v4 路径
+xray v6dest [name] [domain]                          更改 v6 目标地址
+xray v6sni [name] [domain]                           更改 v6 SNI
+xray v6path [name] [path]                            更改 v6 路径
+xray v4sid [name]                                    重新生成 v4 Short IDs
+xray v6sid [name]                                    重新生成 v6 Short IDs
+xray v6only [name]                                   切换 v6only 状态
+```
 
-更改:
-   dp, dynamicport [name] [start | auto] [end]     更改动态端口
-   full [name] [...]                               更改多个参数
-   id [name] [uuid | auto]                         更改 UUID
-   host [name] [domain]                            更改域名
-   port [name] [port | auto]                       更改端口
-   path [name] [path | auto]                       更改路径
-   passwd [name] [password | auto]                 更改密码
-   key [name] [Private key | atuo] [Public key]    更改密钥
-   type [name] [type | auto]                       更改伪装类型
-   method [name] [method | auto]                   更改加密方式
-   sni [name] [ ip | domain]                       更改 serverName
-   seed [name] [seed | auto]                       更改 mKCP seed
-   new [name] [...]                                更改协议
-   web [name] [domain]                             更改伪装网站
 
-进阶:
-   dns [...]                                       设置 DNS
-   dd, ddel [name...]                              删除多个配置**
-   fix [name]                                      修复一个配置
-   fix-all                                         修复全部配置
-   fix-caddyfile                                   修复 Caddyfile
-   fix-config.json                                 修复 config.json
+### 3. 启用 GitHub Actions 自动打包
+非常关键的一步：**原脚本是通过下载 Release 里的 `code.zip` 来安装核心代码的，而不是直接克隆仓库。**
 
-管理:
-   un, uninstall                                   卸载
-   u, update [core | sh | dat | caddy] [ver]       更新
-   U, update.sh                                    更新脚本
-   s, status                                       运行状态
-   start, stop, restart [caddy]                    启动, 停止, 重启
-   t, test                                         测试运行
-   reinstall                                       重装脚本
+好在原作者留下了 `.github/workflows/release.yml`，所以你只需要：
+1. 打开你 GitHub 仓库主页，点击上方的 **Actions** 标签页。
+2. 如果提示 "Workflows aren't being run"，点击绿色按钮 **I understand my workflows, go ahead and enable them** 启用它。
+3. 以后每次你修改了代码想要更新发布，**一定要记得修改 `xray.sh` 文件里的版本号**（例如把 `is_sh_ver=v1.33` 改成 `v1.34`）。
+4. 将改动 Push 到 GitHub 后，Actions 会自动读取新版本号，自动帮你把代码打包成 `code.zip`，并生成一个新的 Release。
 
-测试:
-   client [name]                                   显示用于客户端 JSON, 仅供参考
-   debug [name]                                    显示一些 debug 信息, 仅供参考
-   gen [...]                                       同等于 add, 但只显示 JSON 内容, 不创建文件, 测试使用
-   genc [name]                                     显示用于客户端部分 JSON, 仅供参考
-   no-auto-tls [...]                               同等于 add, 但禁止自动配置 TLS, 可用于 *TLS 相关协议
-   xapi [...]                                      同等于 xray api, 但 API 后端使用当前运行的 Xray 服务
+### 4. 在你的 VPS 上安装使用
+当你看到 GitHub 的 Releases 页面已经自动生成了带有 `code.zip` 的版本后，你就可以在你的服务器上跑自己的安装指令了：
 
-其他:
-   bbr                                             启用 BBR, 如果支持
-   bin [...]                                       运行 Xray 命令, 例如: xray bin help
-   api, x25519, tls, run, uuid  [...]              兼容 Xray 命令
-   h, help                                         显示此帮助界面
-
-谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
-反馈问题) https://github.com/233boy/xray/issues
-文档(doc) https://233boy.com/xray/xray-script/
+```bash
+bash <(wget -qO- -o- https://github.com/233boy/Xray/raw/main/install.sh)
 ```
