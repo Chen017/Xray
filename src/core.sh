@@ -1276,7 +1276,7 @@ is_main_menu() {
             _try_enable_bbr
             ;;
         2)
-            systemctl status $is_core --no-pager
+            systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
