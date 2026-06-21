@@ -1209,13 +1209,6 @@ EOF
 # footer msg
 footer_msg() {
     [[ $is_core_stop && ! $is_new_json ]] && warn "$is_core_name 当前处于停止状态."
-    ####### 要点13脸吗只会改我链接的小人 #######
-    unset c n m s b
-    msg "------------- END -------------"
-    msg "关注(tg): $(msg_ul https://t.me/tg2333)"
-    msg "文档(doc): $(msg_ul https://233boy.com/$is_core/$is_core-script/)"
-    msg "推广(ads): 机场推荐($is_core_name services): $(msg_ul https://g${c}e${n}t${m}j${s}m${b}s.com/)\n"
-    ####### 要点13脸吗只会改我链接的小人 #######
 }
 
 # update core, sh
@@ -1298,7 +1291,7 @@ is_main_menu() {
         uninstall
         ;;
     6)
-        ask list is_do_other "启用BBR 查看运行状态 查看日志 查看错误日志 测试运行 重装脚本 设置DNS 切换v6only 放行端口 关闭端口"
+        ask list is_do_other "启用BBR 查看运行状态 查看日志 查看错误日志 测试运行 重装脚本 修改日志等级 切换v6only 放行端口 关闭端口"
         case $REPLY in
         1)
             load bbr.sh
@@ -1322,8 +1315,10 @@ is_main_menu() {
             get reinstall
             ;;
         7)
-            load dns.sh
-            dns_set
+            ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
+            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
+            _green "\n已将日志等级修改为: $is_log_level\n"
+            manage restart &
             ;;
         8)
             is_try_change=1
@@ -1418,10 +1413,7 @@ main() {
         is_dont_auto_exit=
         [[ $is_api_fail ]] && manage restart &
         ;;
-    dns)
-        load dns.sh
-        dns_set ${@:2}
-        ;;
+
     debug)
         is_debug=1
         get info $2
