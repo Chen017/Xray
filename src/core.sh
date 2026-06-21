@@ -189,6 +189,7 @@ save_iptables() {
 
 open_port() {
     local p=$1
+    close_port $p
     if [[ $(type -P iptables) ]]; then
         iptables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
         iptables -I INPUT -p udp --dport $p -j ACCEPT &>/dev/null
@@ -203,12 +204,12 @@ open_port() {
 close_port() {
     local p=$1
     if [[ $(type -P iptables) ]]; then
-        iptables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
-        iptables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+        while iptables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null; do :; done
+        while iptables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null; do :; done
     fi
     if [[ $(type -P ip6tables) ]]; then
-        ip6tables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
-        ip6tables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null
+        while ip6tables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null; do :; done
+        while ip6tables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null; do :; done
     fi
     save_iptables
 }
@@ -550,8 +551,8 @@ EOF
         cat <<EOF >$is_config_json
 {
     "log": {
-        "access": "/var/log/'$is_core'/access.log",
-        "error": "/var/log/'$is_core'/error.log",
+        "access": "$is_log_dir/access.log",
+        "error": "$is_log_dir/error.log",
         "loglevel": "warning"
     },
     "dns": {
@@ -1070,7 +1071,7 @@ get() {
 
 # show info
 info() {
-    is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
+    is_can_change=(0 1 2 3 4 5 6 7 8)
     if [[ ! $is_protocol ]]; then
         get info $1
     fi
