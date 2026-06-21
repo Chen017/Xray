@@ -63,7 +63,7 @@ esac
 
 is_core=xray
 is_core_name=Xray
-is_core_dir=/etc/$is_core
+is_core_dir=/usr/local/etc/$is_core
 is_core_bin=$is_core_dir/bin/$is_core
 is_core_repo=xtls/$is_core-core
 is_conf_dir=$is_core_dir/conf

@@ -115,6 +115,17 @@ get_pbk() {
     is_public_key=${is_tmp_pbk[1]}
 }
 
+get_random_sni() {
+    local snis=("www.magicardshop.jp" "ototoy.jp" "dova-s.jp" "hf-mirror.com")
+    local idx1=$((RANDOM % 4))
+    local idx2=$((RANDOM % 4))
+    while [[ $idx2 == $idx1 ]]; do
+        idx2=$((RANDOM % 4))
+    done
+    tmp_v4_sni=${snis[$idx1]}
+    tmp_v6_sni=${snis[$idx2]}
+}
+
 show_list() {
     PS3=''
     COLUMNS=1
@@ -324,11 +335,12 @@ create() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "${v4_dest:-$is_servername:443}",
+                    "dest": "${v4_dest:-${v4_sni:-$is_servername}:443}",
                     "serverNames": [
                         "${v4_sni:-$is_servername}"
                     ],
                     "privateKey": "$is_private_key",
+                    "publicKey": "$is_public_key",
                     "shortIds": ${v4_short_ids:-$is_short_ids},
                     "maxTimeDiff": 60000,
                     "limitFallbackUpload": {
@@ -378,11 +390,12 @@ create() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "${v6_dest:-$is_servername:443}",
+                    "dest": "${v6_dest:-${v6_sni:-$is_servername}:443}",
                     "serverNames": [
                         "${v6_sni:-$is_servername}"
                     ],
                     "privateKey": "$is_private_key",
+                    "publicKey": "$is_public_key",
                     "shortIds": ${v6_short_ids:-$is_short_ids},
                     "maxTimeDiff": 60000,
                     "limitFallbackUpload": {
@@ -942,6 +955,12 @@ get() {
         [[ ! $port ]] && get_port && port=$tmp_port
         [[ ! $uuid ]] && get_uuid && uuid=$tmp_uuid
         [[ ! $is_short_ids ]] && get_short_ids
+        [[ ! $is_private_key ]] && get_pbk
+        [[ ! $is_servername && ! $v4_sni ]] && {
+            get_random_sni
+            v4_sni=$tmp_v4_sni
+            v6_sni=$tmp_v6_sni
+        }
         ;;
     file)
         is_file_str=$2

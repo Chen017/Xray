@@ -3,4 +3,4 @@
 args=$@
 is_sh_ver=v1
 
-. /etc/xray/sh/src/init.sh
+. /usr/local/etc/xray/sh/src/init.sh
