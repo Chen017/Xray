@@ -1045,13 +1045,14 @@ get() {
 
 # show info
 info() {
+    is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
     if [[ ! $is_protocol ]]; then
         get info $1
     fi
     [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
     
+    get addr
     is_color=41
-    is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
 
     # get active shortId (first non-empty or empty)
     is_v4_sid=$(jq -r '.[1] // ""' <<<"$v4_short_ids")
