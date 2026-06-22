@@ -552,6 +552,7 @@ change() {
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {
         ask set_change_list
+        [[ $REPLY == "0" ]] && return
         is_change_id=${is_can_change[$REPLY - 1]}
     }
     case $is_change_id in
@@ -853,8 +854,9 @@ get() {
         [[ ! $is_file_str ]] && is_file_str='.json$'
         # is_all_json=("$(ls $is_conf_dir | grep -E $is_file_str)")
         readarray -t is_all_json <<<"$(ls $is_conf_dir | grep -E -i "$is_file_str" | sed '/dynamic-port-.*-link/d' | head -233)" # limit max 233 lines for show.
+        [[ ${#is_all_json[@]} -eq 1 && -z "${is_all_json[0]}" ]] && unset is_all_json
         [[ ! $is_all_json ]] && err "无法找到相关的配置文件: $2"
-        [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=$is_all_json && is_auto_get_config=1
+        [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=${is_all_json[0]} && is_auto_get_config=1
         [[ ! $is_config_file ]] && {
             [[ $is_dont_auto_exit ]] && return
             ask get_config_file
@@ -898,8 +900,13 @@ get() {
         ;;
     log | logerr)
         msg "\n 提醒: 按 $(_green Ctrl + C) 退出\n"
-        [[ $1 == 'log' ]] && tail -f $is_log_dir/access.log
-        [[ $1 == 'logerr' ]] && tail -f $is_log_dir/error.log
+        trap "echo '退出日志查看...'" INT
+        if [[ $1 == 'log' ]]; then
+            tail -f $is_log_dir/access.log
+        else
+            tail -f $is_log_dir/error.log
+        fi
+        trap - INT
         ;;
     reinstall)
         warn "重装功能已移除, 请手动卸载后重新安装."
@@ -1145,10 +1152,12 @@ is_main_menu() {
         case $REPLY in
         1)
             change
+            [[ $REPLY == "0" ]] && continue
             pause
             ;;
         2)
             info
+            [[ $REPLY == "0" ]] && continue
             pause
             ;;
         3)
@@ -1158,6 +1167,7 @@ is_main_menu() {
             ;;
         4)
             ask list is_do_manage "启动 停止 重启"
+            [[ $REPLY == "0" ]] && continue
             manage $REPLY &
             msg "\n管理状态执行: $(_green $is_do_manage)\n"
             sleep 1
@@ -1165,6 +1175,7 @@ is_main_menu() {
         5)
             is_tmp_list=("更新$is_core_name" "更新脚本")
             ask list is_do_update null "\n请选择更新:\n"
+            [[ $REPLY == "0" ]] && continue
             update $REPLY
             pause
             ;;
@@ -1174,6 +1185,7 @@ is_main_menu() {
             ;;
         7)
             ask list is_do_other "查看日志 查看错误日志 测试运行 修改日志等级 切换v6only 放行端口 关闭端口"
+            [[ $REPLY == "0" ]] && continue
             case $REPLY in
             1)
                 get log
@@ -1187,6 +1199,7 @@ is_main_menu() {
                 ;;
             4)
                 ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
+                [[ $REPLY == "0" ]] && continue
                 sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
                 _green "\n已将日志等级修改为: $is_log_level\n"
                 manage restart &
