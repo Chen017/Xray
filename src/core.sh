@@ -45,17 +45,19 @@ get_short_ids() {
 }
 
 get_ip() {
-    [[ $ip || $is_dont_get_ip ]] && return
-    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
-    [[ ! $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    [[ $ip || $is_dont_get_ip || $is_get_ip_done ]] && return
+    export is_get_ip_done=1
+    export "$(_wget -T 2 -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    [[ ! $ip ]] && export "$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
         err "获取服务器 IP 失败.."
     }
 }
 
 get_ipv6() {
-    [[ $ipv6 || $is_dont_get_ip ]] && return
-    export "ipv6=$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip= | cut -d= -f2)" &>/dev/null
+    [[ $ipv6 || $is_dont_get_ip || $is_get_ipv6_done ]] && return
+    export is_get_ipv6_done=1
+    export "ipv6=$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip= | cut -d= -f2)" &>/dev/null
 }
 
 get_port() {
@@ -206,7 +208,10 @@ ask() {
     while :; do
         echo -ne "$is_opt_input_msg "
         read REPLY
-        [[ $REPLY == "0" ]] && return
+        [[ $REPLY == "0" ]] && {
+            unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg
+            return
+        }
         [[ ! $REPLY && $is_default_arg ]] && {
             [[ $is_default_arg != "empty_allowed" ]] && export $is_ask_set="$is_default_arg"
             break
@@ -568,6 +573,7 @@ change() {
         fi
         [[ $is_auto ]] && get_port && is_new_port=$tmp_port
         [[ ! $is_new_port ]] && ask string is_new_port "请输入新端口:"
+        [[ $REPLY == "0" ]] && return
         add $net $is_new_port
         ;;
     1)
@@ -575,6 +581,7 @@ change() {
         is_new_v4_path=$3
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         [[ ! $is_new_v4_path ]] && ask string is_new_v4_path "请输入新 xhttp 路径:"
+        [[ $REPLY == "0" ]] && return
         v4_path=$is_new_v4_path
         add $net
         ;;
@@ -596,6 +603,7 @@ change() {
         is_new_v4_sni=$3
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "请输入新的 v4 目标域名 (SNI/Dest) [0 返回]:"
+        [[ $REPLY == "0" ]] && return
         v4_sni=$is_new_v4_sni
         add $net
         ;;
@@ -604,6 +612,7 @@ change() {
         is_new_v6_sni=$3
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
         [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "请输入新的 v6 目标域名 (SNI/Dest) [0 返回]:"
+        [[ $REPLY == "0" ]] && return
         v6_sni=$is_new_v6_sni
         add $net
         ;;
@@ -658,6 +667,7 @@ del() {
 # uninstall
 uninstall() {
     ask string y "是否卸载 ${is_core_name}? [y]:"
+    [[ $REPLY == "0" ]] && return
     manage stop &>/dev/null
     manage disable &>/dev/null
     
