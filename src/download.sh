@@ -39,6 +39,7 @@ download() {
         link="https://github.com/${is_sh_repo}/releases/download/${latest_ver}/code.zip"
         download_file
         unzip -qo $tmpfile -d $is_sh_dir
+        cp -f $is_sh_dir/xray.sh $is_sh_bin
         chmod +x $is_sh_bin
         ;;
     dat)
