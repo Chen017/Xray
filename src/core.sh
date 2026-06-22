@@ -1,38 +1,5 @@
 #!/bin/bash
 
-protocol_list=(
-    VLESS-REALITY
-)
-mainmenu=(
-    "更改配置"
-    "查看配置"
-    "运行管理"
-    "更新"
-    "卸载"
-    "其他"
-)
-info_list=(
-    "协议 (protocol)"
-    "地址 (address)"
-    "端口 (port)"
-    "用户ID (id)"
-    "传输协议 (network)"
-    "伪装类型 (type)"
-    "伪装域名 (host)"
-    "路径 (path)"
-    "传输层安全 (TLS)"
-    "mKCP seed"
-    "密码 (password)"
-    "加密方式 (encryption)"
-    "链接 (URL)"
-    "目标地址 (remote addr)"
-    "目标端口 (remote port)"
-    "流控 (flow)"
-    "SNI (serverName)"
-    "指纹 (Fingerprint)"
-    "公钥 (Public key)"
-    "用户名 (Username)"
-)
 change_list=(
     "更改端口"
     "更改 xhttp 路径"
@@ -82,7 +49,7 @@ get_short_ids() {
 }
 
 get_ip() {
-    [[ $ip || $is_no_auto_tls || $is_gen || $is_dont_get_ip ]] && return
+    [[ $ip || $is_dont_get_ip ]] && return
     export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
@@ -91,7 +58,7 @@ get_ip() {
 }
 
 get_ipv6() {
-    [[ $ipv6 || $is_no_auto_tls || $is_gen || $is_dont_get_ip ]] && return
+    [[ $ipv6 || $is_dont_get_ip ]] && return
     export "ipv6=$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip= | cut -d= -f2)" &>/dev/null
 }
 
@@ -217,36 +184,6 @@ close_port() {
 # ask input a string or pick a option for list.
 ask() {
     case $1 in
-    set_ss_method)
-        is_tmp_list=(${ss_method_list[@]})
-        is_default_arg=$is_random_ss_method
-        is_opt_msg="\n请选择加密方式:\n"
-        is_opt_input_msg="(默认\e[92m $is_default_arg\e[0m):"
-        is_ask_set=ss_method
-        ;;
-    set_header_type)
-        is_tmp_list=(${header_type_list[@]})
-        is_default_arg=$is_random_header_type
-        [[ $(grep -i tcp <<<"$is_new_protocol-$net") ]] && {
-            is_tmp_list=(none http)
-            is_default_arg=none
-        }
-        is_opt_msg="\n请选择伪装类型:\n"
-        is_opt_input_msg="(默认\e[92m $is_default_arg\e[0m):"
-        is_ask_set=header_type
-        [[ $is_use_header_type ]] && return
-        ;;
-    set_protocol)
-        is_tmp_list=(${protocol_list[@]})
-        [[ $is_no_auto_tls ]] && {
-            unset is_tmp_list
-            for v in ${protocol_list[@]}; do
-                [[ $(grep -i tls$ <<<$v) ]] && is_tmp_list=(${is_tmp_list[@]} $v)
-            done
-        }
-        is_opt_msg="\n请选择协议:\n"
-        is_ask_set=is_new_protocol
-        ;;
     set_change_list)
         is_tmp_list=()
         for v in ${is_can_change[@]}; do
@@ -271,11 +208,6 @@ ask() {
         is_opt_msg="\n请选择配置:\n"
         is_ask_set=is_config_file
         ;;
-    mainmenu)
-        is_tmp_list=("${mainmenu[@]}")
-        is_ask_set=is_main_pick
-        is_emtpy_exit=1
-        ;;
     esac
     msg $is_opt_msg
     [[ ! $is_opt_input_msg ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m] [0 返回]:"
@@ -283,12 +215,9 @@ ask() {
     while :; do
         echo -ne "$is_opt_input_msg "
         read REPLY
-        [[ $REPLY == "0" && $is_ask_set != 'is_main_pick' ]] && exec $is_sh_bin
+        [[ $REPLY == "0" ]] && exec $is_sh_bin
         [[ ! $REPLY && $is_emtpy_exit ]] && exit
         [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
-        [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && $is_ask_set == 'is_main_pick' ]] && {
-            msg "\n${is_get}2${is_str}3${is_msg}3b${is_tmp}o${is_opt}y\n" && exit
-        }
         if [[ ! $is_tmp_list ]]; then
             [[ $(grep port <<<$is_ask_set) ]] && {
                 [[ ! $(is_test port "$REPLY") ]] && {
@@ -507,14 +436,6 @@ create() {
 EOF
 )
 
-        # only show json, dont save to file.
-        [[ $is_gen ]] && {
-            msg
-            jq <<<$is_new_json
-            msg
-            return
-        }
-
         # del old file
         [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
         
@@ -528,24 +449,6 @@ EOF
         else
             manage restart &
         fi
-        ;;
-    client)
-        is_tls=tls
-        is_client=1
-        get info $2
-        [[ ! $is_client_id_json ]] && err "($is_config_name) 不支持生成客户端配置."
-        [[ $host ]] && is_stream="${is_stream/network:\"$net\"/network:\"$net\",security:\"tls\"}"
-        is_new_json=$(jq '{outbounds:[{tag:"'$is_config_name'",protocol:"'$is_protocol'",'"$is_client_id_json"','"$is_stream"'}]}' <<<{})
-        if [[ $is_full_client ]]; then
-            is_dns='dns:{servers:[{address:"223.5.5.5",domain:["geosite:cn","geosite:geolocation-cn"],expectIPs:["geoip:cn"]},"1.1.1.1","8.8.8.8"]}'
-            is_route='routing:{rules:[{type:"field",outboundTag:"direct",ip:["geoip:cn","geoip:private"]},{type:"field",outboundTag:"direct",domain:["geosite:cn","geosite:geolocation-cn"]}]}'
-            is_inbounds='inbounds:[{port:2333,listen:"127.0.0.1",protocol:"socks",settings:{udp:true},sniffing:{enabled:true,destOverride:["http","tls"]}}]'
-            is_outbounds='outbounds:[{tag:"'$is_config_name'",protocol:"'$is_protocol'",'"$is_client_id_json"','"$is_stream"'},{tag:"direct",protocol:"freedom"}]'
-            is_new_json=$(jq '{'$is_dns,$is_route,$is_inbounds,$is_outbounds'}' <<<{})
-        fi
-        msg
-        jq <<<$is_new_json
-        msg
         ;;
     config.json)
         cat <<EOF >$is_config_json
@@ -634,45 +537,6 @@ EOF
 change() {
     is_change=1
     is_dont_show_info=1
-    if [[ $2 ]]; then
-        case ${2,,} in
-        full)
-            is_change_id=full
-            ;;
-        port)
-            is_change_id=0
-            ;;
-        v4path | v4-path | path | xhttp-path)
-            is_change_id=1
-            ;;
-        id | uuid)
-            is_change_id=2
-            ;;
-        key | publickey | privatekey)
-            is_change_id=3
-            ;;
-        v4dest | v4-dest | v4sni | v4-sni)
-            is_change_id=4
-            ;;
-        v6dest | v6-dest | v6sni | v6-sni)
-            is_change_id=5
-            ;;
-        v4sid | v4-sid | v4shortid)
-            is_change_id=6
-            ;;
-        v6sid | v6-sid | v6shortid)
-            is_change_id=7
-            ;;
-        v6only | v6-only)
-            is_change_id=8
-            ;;
-        *)
-            [[ $is_try_change ]] && return
-            err "无法识别 ($2) 更改类型."
-            ;;
-        esac
-    fi
-    [[ $is_try_change ]] && return
     [[ $is_dont_auto_exit ]] && {
         get info $1
     } || {
@@ -690,7 +554,6 @@ change() {
     [[ $host ]] && net=$is_protocol-$net-tls
     [[ $is_reality ]] && net=reality
     [[ $is_dynamic_port ]] && net=${net}d
-    [[ $3 == 'auto' ]] && is_auto=1
     # if is_dont_show_info exist, cant show info.
     is_dont_show_info=
     # if not prefer args, show change list and then get change id.
@@ -785,10 +648,6 @@ del() {
     # get a config file
     [[ ! $is_config_file ]] && get info $1
     if [[ $is_config_file ]]; then
-        if [[ $is_main_start && ! $is_no_del_msg ]]; then
-            msg "\n是否删除配置文件?: $is_config_file"
-            pause
-        fi
         api del $is_conf_dir/"$is_config_file" $is_dynamic_port_file &>/dev/null
         rm -rf $is_conf_dir/"$is_config_file" $is_dynamic_port_file
         [[ $is_api_fail && ! $is_new_json ]] && manage restart &
@@ -951,12 +810,6 @@ add() {
         [[ $is_use_servername ]] && is_servername=$is_use_servername
     fi
 
-    # for main menu start, dont auto create args
-    if [[ $is_main_start ]]; then
-        # set port
-        [[ ! $port ]] && ask string port "请输入端口:"
-    fi
-
     # create json
     create server $is_new_protocol
 
@@ -1053,9 +906,7 @@ get() {
         [[ $1 == 'logerr' ]] && tail -f $is_log_dir/error.log
         ;;
     reinstall)
-        is_install_sh=$(cat $is_sh_dir/install.sh)
-        uninstall
-        bash <<<$is_install_sh
+        warn "重装功能已移除, 请手动卸载后重新安装."
         ;;
     test-run)
         systemctl list-units --full -all &>/dev/null
@@ -1086,7 +937,7 @@ info() {
     if [[ ! $is_protocol ]]; then
         get info $1
     fi
-    [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
+    [[ $is_dont_show_info || $is_dont_auto_exit ]] && return # dont show info
     
     get addr
     is_color=41
@@ -1315,9 +1166,7 @@ is_main_menu() {
             manage restart &
             ;;
         5)
-            is_try_change=1
-            change test v6only
-            is_change_id=21
+            is_change_id=8
             change
             ;;
         6)
@@ -1343,151 +1192,4 @@ is_main_menu() {
     esac
 }
 
-# check prefer args, if not exist prefer args and show main menu
-main() {
-    case $1 in
-    a | add | gen | no-auto-tls)
-        [[ $1 == 'gen' ]] && is_gen=1
-        [[ $1 == 'no-auto-tls' ]] && is_no_auto_tls=1
-        add ${@:2}
-        ;;
-    api | bin | pbk | x25519 | tls | run | uuid)
-        is_run_command=$1
-        if [[ $1 == 'bin' ]]; then
-            $is_core_bin ${@:2}
-        else
-            [[ $is_run_command == 'pbk' ]] && is_run_command=x25519
-            $is_core_bin $is_run_command ${@:2}
-        fi
-        ;;
-    bbr)
-        load bbr.sh
-        _try_enable_bbr
-        ;;
-    c | config | change)
-        change ${@:2}
-        ;;
-    client | genc)
-        [[ $1 == 'client' ]] && is_full_client=1
-        create client $2
-        ;;
-    d | del | rm)
-        del $2
-        ;;
-    dd | ddel | fix | fix-all)
-        case $1 in
-        fix)
-            [[ $2 ]] && {
-                change $2 full
-            } || {
-                is_change_id=full && change
-            }
-            return
-            ;;
-        fix-all)
-            is_dont_auto_exit=1
-            msg
-            for v in $(ls $is_conf_dir | grep .json$ | sed '/dynamic-port-.*-link/d'); do
-                msg "fix: $v"
-                change $v full
-            done
-            _green "\nfix 完成.\n"
-            ;;
-        *)
-            is_dont_auto_exit=1
-            [[ ! $2 ]] && {
-                err "无法找到需要删除的参数"
-            } || {
-                for v in ${@:2}; do
-                    del $v
-                done
-            }
-            ;;
-        esac
-        is_dont_auto_exit=
-        [[ $is_api_fail ]] && manage restart &
-        ;;
 
-    debug)
-        is_debug=1
-        get info $2
-        warn "如果需要复制; 请把 *uuid, *password, *host, *key 的值改写, 以避免泄露."
-        ;;
-    fix-config.json)
-        create config.json
-        ;;
-    i | info)
-        info $2
-        ;;
-    ip)
-        get_ip
-        msg $ip
-        ;;
-    log | logerr | errlog)
-        load log.sh
-        log_set $@
-        ;;
-    un | uninstall)
-        uninstall
-        ;;
-    u | up | update | U | update.sh)
-        is_update_name=$2
-        is_update_ver=$3
-        [[ ! $is_update_name ]] && is_update_name=core
-        [[ $1 == 'U' || $1 == 'update.sh' ]] && {
-            is_update_name=sh
-            is_update_ver=
-        }
-        if [[ $2 == 'dat' ]]; then
-            load download.sh
-            download dat
-            msg "$(_green 更新 geoip.dat geosite.dat 成功.)\n"
-            manage restart &
-        else
-            update $is_update_name $is_update_ver
-        fi
-        ;;
-    ssss | ss2022)
-        get $@
-        ;;
-    s | status)
-        msg "\n$is_core_ver: $is_core_status\n"
-        ;;
-    start | stop | r | restart)
-        manage $1 &
-        ;;
-    t | test)
-        get test-run
-        ;;
-    reinstall)
-        get $1
-        ;;
-    get-port)
-        get_port
-        msg $tmp_port
-        ;;
-    main)
-        is_main_menu
-        ;;
-    v | ver | version)
-        msg "\n$(_green $is_core_ver) / $(_cyan $is_core_name script $is_sh_ver)\n"
-        ;;
-    xapi)
-        api ${@:2}
-        ;;
-    *)
-        is_try_change=1
-        change test $1
-        if [[ $is_change_id ]]; then
-            unset is_try_change
-            [[ $2 ]] && {
-                change $2 $1 ${@:3}
-            } || {
-                change
-            }
-        else
-            err "无法识别 ($1)"
-        fi
-        ;;
-    esac
-}

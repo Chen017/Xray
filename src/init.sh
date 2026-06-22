@@ -21,19 +21,6 @@ _yellow() { echo -e ${yellow}$@${none}; }
 _magenta() { echo -e ${magenta}$@${none}; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
-_rm() {
-    rm -rf "$@"
-}
-_cp() {
-    cp -rf "$@"
-}
-_sed() {
-    sed -i "$@"
-}
-_mkdir() {
-    mkdir -p "$@"
-}
-
 is_err=$(_red_bg 错误!)
 is_warn=$(_red_bg 警告!)
 
@@ -98,5 +85,5 @@ else
 fi
 
 load core.sh
-[[ ! $args ]] && args=main
-main $args
+is_main_menu
+
