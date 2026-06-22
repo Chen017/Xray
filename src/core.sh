@@ -13,9 +13,10 @@ change_list=(
 )
 servername_list=(
     www.magicardshop.jp
-    ototoy.jp
     dova-s.jp
     hf-mirror.com
+    hahuma.com
+    dodoshort.com
 )
 
 msg() {
@@ -47,7 +48,14 @@ get_short_ids() {
 get_ip() {
     [[ $ip || $is_dont_get_ip || $is_get_ip_done ]] && return
     export is_get_ip_done=1
-    export "$(_wget -T 2 -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    
+    local is_local_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -Eo 'src [0-9.]+' | awk '{print $2}')
+    if [[ $is_local_ip ]] && ! echo "$is_local_ip" | grep -qE '^(10|127|192\.168|172\.(1[6-9]|2[0-9]|3[0-1])|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7]))\.'; then
+        export ip=$is_local_ip
+    else
+        export "$(_wget -T 2 -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    fi
+    
     [[ ! $ip ]] && export "$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
         err "获取服务器 IP 失败.."
@@ -57,7 +65,13 @@ get_ip() {
 get_ipv6() {
     [[ $ipv6 || $is_dont_get_ip || $is_get_ipv6_done ]] && return
     export is_get_ipv6_done=1
-    export "ipv6=$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip= | cut -d= -f2)" &>/dev/null
+    
+    local is_local_ipv6=$(ip route get 2606:4700:4700::1111 2>/dev/null | grep -Eo 'src [0-9a-fA-F:]+' | awk '{print $2}')
+    if [[ $is_local_ipv6 ]] && ! echo "$is_local_ipv6" | grep -qE '^(fe80|fd|fc|::1)'; then
+        export ipv6=$is_local_ipv6
+    else
+        export "ipv6=$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip= | cut -d= -f2)" &>/dev/null
+    fi
 }
 
 get_port() {
@@ -683,7 +697,6 @@ uninstall() {
     sed -i "/$is_core/d" /root/.bashrc
     systemctl daemon-reload &>/dev/null
     
-    [[ $is_install_sh ]] && return # reinstall
     _green "\n卸载完成!"
     msg "脚本哪里需要完善? 请反馈"
     msg "反馈问题) $(msg_ul https://github.com/${is_sh_repo}/issues)\n"
@@ -918,9 +931,6 @@ get() {
         fi
         trap - INT
         ;;
-    reinstall)
-        warn "重装功能已移除, 请手动卸载后重新安装."
-        ;;
     test-run)
         systemctl list-units --full -all &>/dev/null
         [[ $? != 0 ]] && {
@@ -1115,6 +1125,12 @@ update() {
     _green "\n$is_show_name 更新成功!"
     [[ $is_update_name == 'core' ]] && {
         manage restart &
+        is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
+    }
+    [[ $is_update_name == 'sh' ]] && {
+        _green "\n脚本已更新，正在重新加载..."
+        sleep 1
+        exec $is_sh_bin
     }
 }
 

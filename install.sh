@@ -299,7 +299,7 @@ main() {
 
     # check old version
     [[ -f $is_sh_bin && -d $is_core_dir/bin && -d $is_sh_dir && -d $is_conf_dir ]] && {
-        err "检测到脚本已安装, 如需重装请使用${green} ${is_core} reinstall ${none}命令."
+        err "检测到脚本已安装, 如需重装请先运行${green} ${is_core} ${none}进入主菜单卸载后重新安装."
     }
 
     # check parameters
