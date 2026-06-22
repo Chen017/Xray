@@ -12,15 +12,11 @@ change_list=(
     "切换 v6only"
 )
 servername_list=(
-    www.amazon.com
-    www.ebay.com
-    www.paypal.com
-    www.cloudflare.com
-    dash.cloudflare.com
-    aws.amazon.com
+    www.magicardshop.jp
+    ototoy.jp
+    dova-s.jp
+    hf-mirror.com
 )
-
-is_random_servername=${servername_list[$(shuf -i 0-${#servername_list[@]} -n1) - 1]}
 
 msg() {
     echo -e "$@"
@@ -79,28 +75,23 @@ get_pbk() {
 }
 
 get_random_sni() {
-    local snis=("www.magicardshop.jp" "ototoy.jp" "dova-s.jp" "hf-mirror.com")
-    local idx1=$((RANDOM % 4))
-    local idx2=$((RANDOM % 4))
+    local len=${#servername_list[@]}
+    local idx1=$((RANDOM % len))
+    local idx2=$((RANDOM % len))
     while [[ $idx2 == $idx1 ]]; do
-        idx2=$((RANDOM % 4))
+        idx2=$((RANDOM % len))
     done
-    tmp_v4_sni=${snis[$idx1]}
-    tmp_v6_sni=${snis[$idx2]}
+    tmp_v4_sni=${servername_list[$idx1]}
+    tmp_v6_sni=${servername_list[$idx2]}
 }
 
 show_list() {
-    PS3=''
-    COLUMNS=1
-    select i in "$@"; do echo; done &
-    wait
-    # i=0
-    # for v in "$@"; do
-    #     ((i++))
-    #     echo "$i) $v"
-    # done
-    # echo
-
+    local i=0
+    for v in "$@"; do
+        ((i++))
+        echo "$i) $v"
+    done
+    echo
 }
 
 is_test() {
@@ -215,9 +206,11 @@ ask() {
     while :; do
         echo -ne "$is_opt_input_msg "
         read REPLY
-        [[ $REPLY == "0" ]] && exec $is_sh_bin
-        [[ ! $REPLY && $is_emtpy_exit ]] && exit
-        [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
+        [[ $REPLY == "0" ]] && return
+        [[ ! $REPLY && $is_default_arg ]] && {
+            [[ $is_default_arg != "empty_allowed" ]] && export $is_ask_set="$is_default_arg"
+            break
+        }
         if [[ ! $is_tmp_list ]]; then
             [[ $(grep port <<<$is_ask_set) ]] && {
                 [[ ! $(is_test port "$REPLY") ]] && {
@@ -252,7 +245,7 @@ ask() {
 
         msg "输入${is_err}"
     done
-    unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg is_emtpy_exit
+    unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg
 }
 
 # create file
@@ -836,13 +829,16 @@ get() {
         [[ ! $is_short_ids ]] && get_short_ids
         [[ ! $is_private_key ]] && get_pbk
         if [[ $is_new_install ]]; then
+            is_default_arg="v4上行/v6下行"
             ask list is_route_mode "v4上行/v6下行 v6上行/v4下行" "\n请选择首选的流向模式:" "请选择 (默认: v4上行/v6下行):"
             if [[ $is_route_mode == "v6上行/v4下行" ]]; then
                 export is_v6_uplink=1
                 touch $is_conf_dir/is_v6_uplink
             fi
+            is_default_arg="empty_allowed"
             ask string is_new_v4_sni "请输入 v4 目标域名 (SNI/Dest) [直接回车随机生成]:"
             [[ $is_new_v4_sni ]] && export v4_sni=$is_new_v4_sni
+            is_default_arg="empty_allowed"
             ask string is_new_v6_sni "请输入 v6 目标域名 (SNI/Dest) [直接回车随机生成]:"
             [[ $is_new_v6_sni ]] && export v6_sni=$is_new_v6_sni
         fi
@@ -1084,7 +1080,7 @@ update() {
     [[ $2 ]] && is_new_ver=v${2#v}
     [[ $is_run_ver == $is_new_ver ]] && {
         msg "\n自定义版本和当前 $is_show_name 版本一样, 无需更新.\n"
-        exit
+        return
     }
     load download.sh
     if [[ $is_new_ver ]]; then
@@ -1094,7 +1090,7 @@ update() {
         is_new_ver=$latest_ver
         [[ $is_run_ver == $is_new_ver ]] && {
             msg "\n当前 $is_show_name 已经是最新版本: $(_green $is_run_ver)\n"
-            exit
+            return
         }
         msg "\n发现 $is_show_name 新版本: $(_green $is_new_ver) ... 准备更新\n"
     fi
@@ -1105,91 +1101,124 @@ update() {
     }
 }
 
-is_main_menu() {
-    clear
-    msg "================================================="
-    msg "\n$(_green $is_core_ver) / $(_cyan $is_core_name script $is_sh_ver)\n"
-    msg "================================================="
-    msg "\n$(_green 1.) 更改配置"
-    msg "$(_green 2.) 查看配置"
-    msg "========================"
-    msg "$(_green 3.) 查看运行状态"
-    msg "$(_green 4.) 运行管理"
-    msg "$(_green 5.) 更新"
-    msg "$(_green 6.) 卸载"
-    msg "========================"
-    msg "$(_green 7.) 其他"
-    msg "\n请选择:"
-    read REPLY
-    [[ "$REPLY" == "0" ]] && exit 0
-    case $REPLY in
-    1)
-        change
-        ;;
-    2)
-        info
-        ;;
-    3)
-        systemctl status $is_core -l --no-pager
-        echo
-        pause
-        ;;
-    4)
-        ask list is_do_manage "启动 停止 重启"
-        manage $REPLY &
-        msg "\n管理状态执行: $(_green $is_do_manage)\n"
-        ;;
-    5)
-        is_tmp_list=("更新$is_core_name" "更新脚本")
-        ask list is_do_update null "\n请选择更新:\n"
-        update $REPLY
-        ;;
-    6)
-        uninstall
-        ;;
-    7)
-        ask list is_do_other "查看日志 查看错误日志 测试运行 修改日志等级 切换v6only 放行端口 关闭端口"
-        case $REPLY in
-        1)
-            get log
-            ;;
-        2)
-            get logerr
-            ;;
-        3)
-            get test-run
-            ;;
-        4)
-            ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
-            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
-            _green "\n已将日志等级修改为: $is_log_level\n"
-            manage restart &
-            ;;
-        5)
-            is_change_id=8
-            change
-            ;;
-        6)
-            ask string p "请输入要放行的端口 (1-65535):"
-            if [[ $(is_test port $p) ]]; then
-                open_port $p
-                _green "\n已放行端口: $p\n"
-            else
-                _red "\n无效的端口!\n"
-            fi
-            ;;
-        7)
-            ask string p "请输入要关闭的端口 (1-65535):"
-            if [[ $(is_test port $p) ]]; then
-                close_port $p
-                _green "\n已关闭端口: $p\n"
-            else
-                _red "\n无效的端口!\n"
-            fi
-            ;;
-        esac
-        ;;
-    esac
+# reset state variables between menu operations
+_reset_state() {
+    unset is_protocol is_config_file is_config_name is_json_str
+    unset net is_reality is_old_net is_dynamic_port
+    unset port uuid is_private_key is_public_key
+    unset v4_sni v6_sni v4_dest v6_dest v4_path v6_path
+    unset v4_short_ids v6_short_ids v6_only
+    unset is_change is_change_id is_change_msg is_dont_show_info
+    unset is_auto_get_config is_no_del_msg is_new_json
+    unset is_addr is_v4_sid is_v6_sid is_v6_uplink
+    unset ip ipv6 host is_conf_dir_empty
+    unset is_api_fail is_run_fail is_no_manage_msg
+    unset is_core_stop
+    # re-check core status
+    if [[ $(pgrep -f $is_core_bin) ]]; then
+        is_core_status=$(_green running)
+    else
+        is_core_status=$(_red_bg stopped)
+        is_core_stop=1
+    fi
 }
 
-
+is_main_menu() {
+    while :; do
+        _reset_state
+        clear
+        msg "================================================="
+        msg "\n$(_green $is_core_ver) / $(_cyan $is_core_name script $is_sh_ver)\n"
+        msg "================================================="
+        msg "\n$(_green 1.) 更改配置"
+        msg "$(_green 2.) 查看配置"
+        msg "========================"
+        msg "$(_green 3.) 查看运行状态"
+        msg "$(_green 4.) 运行管理"
+        msg "$(_green 5.) 更新"
+        msg "$(_green 6.) 卸载"
+        msg "========================"
+        msg "$(_green 7.) 其他"
+        msg "\n请选择 [0 退出]:"
+        read REPLY
+        [[ "$REPLY" == "0" ]] && exit 0
+        case $REPLY in
+        1)
+            change
+            pause
+            ;;
+        2)
+            info
+            pause
+            ;;
+        3)
+            systemctl status $is_core -l --no-pager
+            echo
+            pause
+            ;;
+        4)
+            ask list is_do_manage "启动 停止 重启"
+            manage $REPLY &
+            msg "\n管理状态执行: $(_green $is_do_manage)\n"
+            sleep 1
+            ;;
+        5)
+            is_tmp_list=("更新$is_core_name" "更新脚本")
+            ask list is_do_update null "\n请选择更新:\n"
+            update $REPLY
+            pause
+            ;;
+        6)
+            uninstall
+            exit 0
+            ;;
+        7)
+            ask list is_do_other "查看日志 查看错误日志 测试运行 修改日志等级 切换v6only 放行端口 关闭端口"
+            case $REPLY in
+            1)
+                get log
+                ;;
+            2)
+                get logerr
+                ;;
+            3)
+                get test-run
+                pause
+                ;;
+            4)
+                ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
+                sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
+                _green "\n已将日志等级修改为: $is_log_level\n"
+                manage restart &
+                sleep 1
+                ;;
+            5)
+                is_change_id=8
+                change
+                pause
+                ;;
+            6)
+                ask string p "请输入要放行的端口 (1-65535):"
+                if [[ $(is_test port $p) ]]; then
+                    open_port $p
+                    _green "\n已放行端口: $p\n"
+                else
+                    _red "\n无效的端口!\n"
+                fi
+                pause
+                ;;
+            7)
+                ask string p "请输入要关闭的端口 (1-65535):"
+                if [[ $(is_test port $p) ]]; then
+                    close_port $p
+                    _green "\n已关闭端口: $p\n"
+                else
+                    _red "\n无效的端口!\n"
+                fi
+                pause
+                ;;
+            esac
+            ;;
+        esac
+    done
+}
