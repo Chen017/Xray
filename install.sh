@@ -142,7 +142,7 @@ install_pkg() {
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')
-        msg warn "安装依赖包 >${pkg}"
+        msg warn "正在静默下载并安装必要依赖包... >${pkg}"
         $cmd install -y $pkg &>/dev/null
         if [[ $? != 0 ]]; then
             [[ $cmd =~ yum ]] && yum install epel-release -y &>/dev/null
@@ -408,7 +408,7 @@ main() {
     mkdir -p $is_log_dir
 
     # show a tips msg
-    msg ok "生成配置文件..."
+    msg ok "正在安装并配置 systemd 守护进程服务..."
 
     # create systemd service
     load systemd.sh
@@ -420,12 +420,21 @@ main() {
 
     load core.sh
     # create a tcp config
+    msg ok "正在配置端口并生成核心节点证书凭证..."
     add reality
     
     # 启用 BBR
     load bbr.sh
-    msg ok "正在尝试启用 BBR 优化..."
+    msg ok "正在尝试为服务器网络启用 BBR 拥塞加速优化..."
     _try_enable_bbr
+    
+    msg ok "正在启动 $is_core_name 服务并检测运行状态..."
+    sleep 1.5
+    if [[ $(pgrep -f $is_core_bin) ]]; then
+        msg ok "$is_core_name 后台服务已成功启动运行!"
+    else
+        msg err "$is_core_name 核心启动可能遇到异常，请稍后使用 xray 命令进入控制面板查看状态."
+    fi
     
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok

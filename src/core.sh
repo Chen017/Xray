@@ -164,6 +164,7 @@ save_iptables() {
 
 open_port() {
     local p=$1
+    [[ $is_new_install ]] && _green "\n>>> 正在系统防火墙中开放相关端口: $p"
     close_port $p
     if [[ $(type -P iptables) ]]; then
         iptables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
@@ -455,6 +456,14 @@ EOF
         # save json to file
         cat <<<$is_new_json >$is_json_file
         
+        if [[ $is_new_install ]]; then
+            _green "\n>>> VLESS-REALITY 节点基础配置生成完毕!"
+            _green ">>> 分配监听端口: $port"
+            _green ">>> 生成 UUID 密钥: $uuid"
+            _green ">>> 路由分离模式: ${is_route_mode:-v4上行/v6下行}"
+            echo
+        fi
+        
         open_port $port
         
         if [[ $is_new_install ]]; then
@@ -669,11 +678,11 @@ change() {
         if [[ -f $is_conf_dir/is_v6_uplink ]]; then
             rm -f $is_conf_dir/is_v6_uplink
             unset is_v6_uplink
-            _green "\n当前分离类型为: v6上行/v4下行"
+            _green "\n切换后的分离类型为: v4上行/v6下行"
         else
             touch $is_conf_dir/is_v6_uplink
             export is_v6_uplink=1
-            _green "\n当前分离类型为: v4上行/v6下行"
+            _green "\n切换后的分离类型为: v6上行/v4下行"
         fi
         add $net
         ;;
@@ -1179,6 +1188,27 @@ _reset_state() {
     fi
 }
 
+show_ports_info() {
+    local all_ports=""
+    local xray_ports=""
+    local core_name=${is_core:-xray}
+    
+    if [[ $(type -P netstat) ]]; then
+        all_ports=$(netstat -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+        xray_ports=$(netstat -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+    elif [[ $(type -P ss) ]]; then
+        all_ports=$(ss -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+        xray_ports=$(ss -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+    fi
+    
+    _green "\n当前系统已监听的端口有: ${all_ports:-无}"
+    if [[ $xray_ports ]]; then
+        _green "其中 Xray 正在使用的端口为: $xray_ports\n"
+    else
+        _yellow "目前 Xray 似乎未运行或未占用任何端口.\n"
+    fi
+}
+
 is_main_menu() {
     while :; do
         _reset_state
@@ -1260,6 +1290,7 @@ is_main_menu() {
                 pause
                 ;;
             6)
+                show_ports_info
                 ask string p "请输入要放行的端口 (1-65535):"
                 if [[ $(is_test port $p) ]]; then
                     open_port $p
@@ -1270,6 +1301,7 @@ is_main_menu() {
                 pause
                 ;;
             7)
+                show_ports_info
                 ask string p "请输入要关闭的端口 (1-65535):"
                 if [[ $(is_test port $p) ]]; then
                     close_port $p
