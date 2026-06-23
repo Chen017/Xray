@@ -15,7 +15,7 @@
 ## 🛠️ 脚本功能大纲
 
 - 自动加速优化：一键开启内核 BBR 拥塞控制、TCP Fast Open (TFO) 与 Multipath TCP (MPTCP)。
-- 智能安全策略：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量。
+- 智能安全策略：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与Private IP段。
 - 便捷配置交互：
   - 支持随时更改端口（强制仅放行安全的 443/8443）、路径、UUID、密钥对、各栈 SNI 伪装域名与 ShortIds。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
