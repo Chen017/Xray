@@ -602,13 +602,34 @@ change() {
         # new port
         is_new_port=$3
         if [[ $is_new_port && ! $is_auto ]]; then
-            [[ ! $(is_test port $is_new_port) ]] && err "请输入正确的端口, 可选(1-65535)"
-            [[ $is_new_port != 443 && $(is_test port_used $is_new_port) ]] && err "无法使用 ($is_new_port) 端口"
+            if [[ $is_new_port != 443 && $is_new_port != 8443 ]]; then
+                err "为保障协议伪装的隐蔽性与安全性，本脚本强制规定仅支持 443 或 8443 端口。"
+            fi
+            [[ $(is_test port_used $is_new_port) ]] && err "无法使用 ($is_new_port) 端口，该端口已被占用。"
         fi
+        
         [[ $is_auto ]] && get_port && is_new_port=$tmp_port
-        [[ ! $is_new_port ]] && ask string is_new_port "请输入新端口:"
-        [[ $REPLY == "0" ]] && return
+        
+        if [[ ! $is_new_port ]]; then
+            ask list is_new_port "443 8443" "\n为保障协议伪装的安全性和隐蔽性，本脚本强制仅支持如下端口:" "请选择新端口:"
+            [[ $REPLY == "0" ]] && return
+        fi
+        
+        [[ $is_new_port == $port ]] && {
+            _yellow "\n错误: 新端口与当前节点正在运行的端口 ($port) 相同，无需切换."
+            return
+        }
+        
+        if [[ $(is_test port_used $is_new_port) ]]; then
+            _red "\n错误: 目标端口 ($is_new_port) 已被占用，无法切换!"
+            return
+        fi
+        
+        close_port $port
+        _green "\n>>> 已自动在防火墙中关闭旧端口: $port"
+        
         add $net $is_new_port
+        _green ">>> 已自动在防火墙中放行新端口: $is_new_port\n"
         ;;
     1)
         # new xhttp path
