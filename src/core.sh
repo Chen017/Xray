@@ -10,6 +10,7 @@ change_list=(
     "重新生成 v4 Short IDs"
     "重新生成 v6 Short IDs"
     "切换 v6only"
+    "切换分离类型 (v4上行/v6下行 <-> v6上行/v4下行)"
 )
 servername_list=(
     www.magicardshop.jp
@@ -654,6 +655,19 @@ change() {
         fi
         add $net
         ;;
+    9)
+        # toggle route mode
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        if [[ -f $is_conf_dir/is_v6_uplink ]]; then
+            rm -f $is_conf_dir/is_v6_uplink
+            unset is_v6_uplink
+        else
+            touch $is_conf_dir/is_v6_uplink
+            export is_v6_uplink=1
+        fi
+        add $net
+        info $is_config_name
+        ;;
     esac
 }
 
@@ -956,7 +970,7 @@ get() {
 
 # show info
 info() {
-    is_can_change=(0 1 2 3 4 5 6 7 8)
+    is_can_change=(0 1 2 3 4 5 6 7 8 9)
     if [[ ! $is_protocol ]]; then
         get info $1
     fi
