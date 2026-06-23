@@ -78,10 +78,10 @@ get_ipv6() {
 get_port() {
     tmp_port=443
     if [[ $(is_test port_used 443) ]]; then
-        msg warn "检测到标准 HTTPS 端口 (443) 已被占用，将自动回落 (Fallback) 至备用端口 (8443)."
+        _yellow "\n[警告] 检测到标准 HTTPS 端口 (443) 已被占用，将自动回落 (Fallback) 至备用端口 (8443)."
         tmp_port=8443
         if [[ $(is_test port_used 8443) ]]; then
-            msg err "致命异常: 标准端口 (443) 与备用端口 (8443) 均被占用!"
+            _red "\n[错误] 致命异常: 标准端口 (443) 与备用端口 (8443) 均被占用!"
             err "为保障协议伪装的安全性和隐蔽性，本安装程序拒绝使用其他高危端口。安装进程已安全终止，请释放端口后再试。"
         fi
     fi
