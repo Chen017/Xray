@@ -661,12 +661,13 @@ change() {
         if [[ -f $is_conf_dir/is_v6_uplink ]]; then
             rm -f $is_conf_dir/is_v6_uplink
             unset is_v6_uplink
+            _green "\n当前已切换为: v4上行/v6下行"
         else
             touch $is_conf_dir/is_v6_uplink
             export is_v6_uplink=1
+            _green "\n当前已切换为: v6上行/v4下行"
         fi
         add $net
-        info $is_config_name
         ;;
     esac
 }
