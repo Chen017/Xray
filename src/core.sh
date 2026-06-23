@@ -78,9 +78,11 @@ get_ipv6() {
 get_port() {
     tmp_port=443
     if [[ $(is_test port_used 443) ]]; then
+        msg warn "检测到标准 HTTPS 端口 (443) 已被占用，将自动回落 (Fallback) 至备用端口 (8443)."
         tmp_port=8443
         if [[ $(is_test port_used 8443) ]]; then
-            err "端口 (443) 和 (8443) 均被占用，安装失败。"
+            msg err "致命异常: 标准端口 (443) 与备用端口 (8443) 均被占用!"
+            err "为保障协议伪装的安全性和隐蔽性，本安装程序拒绝使用其他高危端口。安装进程已安全终止，请释放端口后再试。"
         fi
     fi
 }
@@ -1189,21 +1191,30 @@ _reset_state() {
 }
 
 show_ports_info() {
-    local all_ports=""
+    local fw_ports_v4=""
+    if [[ $(type -P iptables) ]]; then
+        fw_ports_v4=$(iptables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
+    fi
+    
+    local fw_ports_v6=""
+    if [[ $(type -P ip6tables) ]]; then
+        fw_ports_v6=$(ip6tables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
+    fi
+    
+    local all_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo)
+    
     local xray_ports=""
     local core_name=${is_core:-xray}
     
     if [[ $(type -P netstat) ]]; then
-        all_ports=$(netstat -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
         xray_ports=$(netstat -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
     elif [[ $(type -P ss) ]]; then
-        all_ports=$(ss -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
         xray_ports=$(ss -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
     fi
     
-    _green "\n当前系统已监听的端口有: ${all_ports:-无}"
+    _green "\n当前防火墙 (iptables) 已放行的端口有: ${all_fw_ports:-无}"
     if [[ $xray_ports ]]; then
-        _green "其中 Xray 正在使用的端口为: $xray_ports\n"
+        _green "当前 Xray 运行占用的端口为: $xray_ports\n"
     else
         _yellow "目前 Xray 似乎未运行或未占用任何端口.\n"
     fi
