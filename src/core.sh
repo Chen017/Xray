@@ -10,7 +10,7 @@ change_list=(
     "重新生成 v4 Short IDs"
     "重新生成 v6 Short IDs"
     "切换 v6only"
-    "切换分离类型 (v4上行/v6下行 <-> v6上行/v4下行)"
+    "切换分离类型"
 )
 servername_list=(
     www.magicardshop.jp
@@ -569,6 +569,14 @@ change() {
     [[ $is_dynamic_port ]] && net=${net}d
     # if is_dont_show_info exist, cant show info.
     is_dont_show_info=
+    
+    # update change list dynamically for route mode
+    if [[ -f $is_conf_dir/is_v6_uplink ]]; then
+        change_list[9]="切换分离类型 (当前: v6上行/v4下行)"
+    else
+        change_list[9]="切换分离类型 (当前: v4上行/v6下行)"
+    fi
+    
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {
         ask set_change_list
@@ -661,11 +669,11 @@ change() {
         if [[ -f $is_conf_dir/is_v6_uplink ]]; then
             rm -f $is_conf_dir/is_v6_uplink
             unset is_v6_uplink
-            _green "\n当前已切换为: v4上行/v6下行"
+            _green "\n当前分离类型为: v6上行/v4下行"
         else
             touch $is_conf_dir/is_v6_uplink
             export is_v6_uplink=1
-            _green "\n当前已切换为: v6上行/v4下行"
+            _green "\n当前分离类型为: v4上行/v6下行"
         fi
         add $net
         ;;
@@ -1159,7 +1167,7 @@ _reset_state() {
     unset is_change is_change_id is_change_msg is_dont_show_info
     unset is_auto_get_config is_no_del_msg is_new_json
     unset is_addr is_v4_sid is_v6_sid is_v6_uplink
-    unset ip ipv6 host is_conf_dir_empty
+    unset host is_conf_dir_empty
     unset is_api_fail is_run_fail is_no_manage_msg
     unset is_core_stop
     # re-check core status
