@@ -1284,10 +1284,21 @@ _get_overview() {
     [[ ! $_ov_fw_ports ]] && _ov_fw_ports="无"
 
     # system listening ports
+    local core_name=${is_core:-xray}
     if [[ $(type -P ss) ]]; then
-        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
+        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | awk -v core="$core_name" '
+            $1 ~ /^(tcp|udp)/ {
+                n = split($5, a, ":"); port = a[n];
+                if ($1 ~ /^udp/ && port >= 30000 && $0 ~ core) next;
+                print port;
+            }' | sort -nu | xargs echo | sed 's/ /, /g')
     elif [[ $(type -P netstat) ]]; then
-        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
+        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | awk -v core="$core_name" '
+            $1 ~ /^(tcp|udp)/ {
+                n = split($4, a, ":"); port = a[n];
+                if ($1 ~ /^udp/ && port >= 30000 && $0 ~ core) next;
+                print port;
+            }' | sort -nu | xargs echo | sed 's/ /, /g')
     fi
     [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
 }
