@@ -4,9 +4,7 @@ _open_bbr() {
 	echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
 	echo "net.core.default_qdisc = fq" >>/etc/sysctl.conf
 	sysctl -p &>/dev/null
-	echo
-	_green "..已经启用 BBR 优化...."
-	echo
+	_ok "BBR 拥塞控制已启用"
 }
 
 _try_enable_bbr() {
@@ -15,6 +13,6 @@ _try_enable_bbr() {
 	if [[ $_test1 -eq 4 && $_test2 -ge 9 ]] || [[ $_test1 -ge 5 ]]; then
 		_open_bbr
 	else
-		warn "不支持启用 BBR 优化."
+		_info "当前内核版本不支持 BBR, 跳过"
 	fi
 }

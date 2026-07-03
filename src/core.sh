@@ -28,14 +28,6 @@ msg_ul() {
     echo -e "\e[4m$@\e[0m"
 }
 
-# pause
-pause() {
-    echo
-    echo -ne "按 $(_green Enter 回车键) 继续, 或按 $(_red Ctrl + C) 取消."
-    read -rs -d $'\n'
-    echo
-}
-
 get_uuid() {
     tmp_uuid=$(cat /proc/sys/kernel/random/uuid)
 }
@@ -59,7 +51,7 @@ get_ip() {
     
     [[ ! $ip ]] && export "$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
-        err "获取服务器 IP 失败.."
+        err "获取服务器 IP 失败"
     }
 }
 
@@ -78,11 +70,10 @@ get_ipv6() {
 get_port() {
     tmp_port=443
     if [[ $(is_test port_used 443) ]]; then
-        _yellow "\n[警告] 检测到标准 HTTPS 端口 (443) 已被占用，将自动回落 (Fallback) 至备用端口 (8443)."
+        _yellow "  [警告] 标准 HTTPS 端口 (443) 已被占用，回落至备用端口 (8443)"
         tmp_port=8443
         if [[ $(is_test port_used 8443) ]]; then
-            _red "\n[错误] 致命异常: 标准端口 (443) 与备用端口 (8443) 均被占用!"
-            err "为保障协议伪装的安全性和隐蔽性，本安装程序拒绝使用其他高危端口。安装进程已安全终止，请释放端口后再试。"
+            err "标准端口 (443) 与备用端口 (8443) 均被占用!\n         为保障协议伪装的安全性和隐蔽性，本脚本仅支持这两个端口。\n         请释放端口后再试。"
         fi
     fi
 }
@@ -108,7 +99,7 @@ show_list() {
     local i=0
     for v in "$@"; do
         ((i++))
-        echo "$i) $v"
+        printf "  ${green}%2s)${none} %s\n" "$i" "$v"
     done
     echo
 }
@@ -151,8 +142,8 @@ is_port_used() {
         return
     fi
     is_cant_test_port=1
-    msg "$is_warn 无法检测端口是否可用."
-    msg "请执行: $(_yellow "${cmd} update -y; ${cmd} install net-tools -y") 来修复此问题."
+    _fail "无法检测端口是否可用"
+    _info "请执行: $(_yellow "${cmd} update -y; ${cmd} install net-tools -y") 来修复此问题"
 }
 
 save_iptables() {
@@ -166,7 +157,6 @@ save_iptables() {
 
 open_port() {
     local p=$1
-    [[ $is_new_install ]] && _green "\n>>> 正在系统防火墙中开放相关端口: $p"
     close_port $p
     if [[ $(type -P iptables) ]]; then
         iptables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
@@ -200,7 +190,7 @@ ask() {
         for v in ${is_can_change[@]}; do
             is_tmp_list+=("${change_list[$v]}")
         done
-        is_opt_msg="\n请选择更改:\n"
+        is_opt_msg="\n  请选择更改:\n"
         is_ask_set=is_change_str
         is_opt_input_msg=$3
         ;;
@@ -216,12 +206,12 @@ ask() {
         ;;
     get_config_file)
         is_tmp_list=("${is_all_json[@]}")
-        is_opt_msg="\n请选择配置:\n"
+        is_opt_msg="\n  请选择配置:\n"
         is_ask_set=is_config_file
         ;;
     esac
     msg $is_opt_msg
-    [[ ! $is_opt_input_msg ]] && is_opt_input_msg="请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m] [0 返回]:"
+    [[ ! $is_opt_input_msg ]] && is_opt_input_msg="  请选择 [\e[91m1-${#is_tmp_list[@]}\e[0m] [0 返回]:"
     [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
         echo -ne "$is_opt_input_msg "
@@ -237,36 +227,36 @@ ask() {
         if [[ ! $is_tmp_list ]]; then
             [[ $(grep port <<<$is_ask_set) ]] && {
                 [[ ! $(is_test port "$REPLY") ]] && {
-                    msg "$is_err 请输入正确的端口, 可选(1-65535)"
+                    _fail "请输入正确的端口, 可选 (1-65535)"
                     continue
                 }
                 if [[ $(is_test port_used $REPLY) && $is_ask_set != 'door_port' ]]; then
-                    msg "$is_err 无法使用 ($REPLY) 端口."
+                    _fail "无法使用 ($REPLY) 端口"
                     continue
                 fi
             }
             [[ $(grep path <<<$is_ask_set) && ! $(is_test path "$REPLY") ]] && {
                 [[ ! $tmp_uuid ]] && get_uuid
-                msg "$is_err 请输入正确的路径, 例如: /$tmp_uuid"
+                _fail "请输入正确的路径, 例如: /$tmp_uuid"
                 continue
             }
             [[ $(grep uuid <<<$is_ask_set) && ! $(is_test uuid "$REPLY") ]] && {
                 [[ ! $tmp_uuid ]] && get_uuid
-                msg "$is_err 请输入正确的 UUID, 例如: $tmp_uuid"
+                _fail "请输入正确的 UUID, 例如: $tmp_uuid"
                 continue
             }
             [[ $(grep ^y$ <<<$is_ask_set) ]] && {
                 [[ $(grep -i ^y$ <<<"$REPLY") ]] && break
-                msg "请输入 (y)"
+                _info "请输入 (y)"
                 continue
             }
-            [[ $REPLY ]] && export $is_ask_set=$REPLY && msg "使用: ${!is_ask_set}" && break
+            [[ $REPLY ]] && export $is_ask_set=$REPLY && _ok "使用: ${!is_ask_set}" && break
         else
             [[ $(is_test number "$REPLY") ]] && is_ask_result=${is_tmp_list[$REPLY - 1]}
-            [[ $is_ask_result ]] && export $is_ask_set="$is_ask_result" && msg "选择: ${!is_ask_set}" && break
+            [[ $is_ask_result ]] && export $is_ask_set="$is_ask_result" && _ok "选择: ${!is_ask_set}" && break
         fi
 
-        msg "输入${is_err}"
+        _fail "输入有误，请重试"
     done
     unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg
 }
@@ -451,7 +441,6 @@ create() {
 }
 EOF
 )
-
         # del old file
         [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
         
@@ -459,14 +448,16 @@ EOF
         cat <<<$is_new_json >$is_json_file
         
         if [[ $is_new_install ]]; then
-            _green "\n>>> VLESS-REALITY 节点基础配置生成完毕!"
-            _green ">>> 分配监听端口: $port"
-            _green ">>> 生成 UUID 密钥: $uuid"
-            _green ">>> 路由分离模式: ${is_route_mode:-v4上行/v6下行}"
+            echo
+            _ok "VLESS-REALITY 节点基础配置生成完毕"
+            _kv "监听端口:" "$port"
+            _kv "UUID:" "$uuid"
+            _kv "分离模式:" "${is_route_mode:-v4上行/v6下行}"
             echo
         fi
         
         open_port $port
+        [[ $is_new_install ]] && _ok "防火墙端口已放行: $port"
         
         if [[ $is_new_install ]]; then
             create config.json
@@ -508,7 +499,7 @@ EOF
             "protocol": "freedom",
             "tag": "direct",
             "settings": {
-                "domainStrategy": "UseIPv4"
+                "domainStrategy": "UseIPv4v6"
             }
         },
         {
@@ -569,10 +560,10 @@ change() {
             [[ $is_change_id == 'full' ]] && {
                 [[ $3 ]] && is_change_msg="更改多个参数" || is_change_msg=
             }
-            [[ $is_change_msg ]] && _green "\n快速执行: $is_change_msg"
+            [[ $is_change_msg ]] && _step "快速执行: $is_change_msg"
         }
         info $1
-        [[ $is_auto_get_config ]] && msg "\n自动选择: $is_config_file"
+        [[ $is_auto_get_config ]] && _info "自动选择: $is_config_file"
     }
     is_old_net=$net
     [[ $host ]] && net=$is_protocol-$net-tls
@@ -603,61 +594,61 @@ change() {
         is_new_port=$3
         if [[ $is_new_port && ! $is_auto ]]; then
             if [[ $is_new_port != 443 && $is_new_port != 8443 ]]; then
-                err "为保障协议伪装的隐蔽性与安全性，本脚本强制规定仅支持 443 或 8443 端口。"
+                err "为保障协议伪装的隐蔽性与安全性，本脚本强制规定仅支持 443 或 8443 端口"
             fi
-            [[ $(is_test port_used $is_new_port) ]] && err "无法使用 ($is_new_port) 端口，该端口已被占用。"
+            [[ $(is_test port_used $is_new_port) ]] && err "无法使用 ($is_new_port) 端口，该端口已被占用"
         fi
         
         [[ $is_auto ]] && get_port && is_new_port=$tmp_port
         
         if [[ ! $is_new_port ]]; then
-            ask list is_new_port "443 8443" "\n为保障协议伪装的安全性和隐蔽性，本脚本强制仅支持如下端口:" "请选择新端口:"
+            ask list is_new_port "443 8443" "\n  为保障协议伪装的安全性和隐蔽性，仅支持如下端口:" "  请选择新端口:"
             [[ $REPLY == "0" ]] && return
         fi
         
         [[ $is_new_port == $port ]] && {
-            _yellow "\n错误: 新端口与当前节点正在运行的端口 ($port) 相同，无需切换."
+            _fail "新端口与当前端口 ($port) 相同，无需切换"
             return
         }
         
         if [[ $(is_test port_used $is_new_port) ]]; then
-            _red "\n错误: 目标端口 ($is_new_port) 已被占用，无法切换!"
+            _fail "目标端口 ($is_new_port) 已被占用，无法切换"
             return
         fi
         
         close_port $port
-        _green "\n>>> 已自动在防火墙中关闭旧端口: $port"
+        _ok "已关闭旧端口防火墙规则: $port"
         
         add $net $is_new_port
-        _green ">>> 已自动在防火墙中放行新端口: $is_new_port\n"
+        _ok "已放行新端口防火墙规则: $is_new_port"
         ;;
     1)
         # new xhttp path
         is_new_v4_path=$3
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v4_path ]] && ask string is_new_v4_path "请输入新 xhttp 路径:"
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
+        [[ ! $is_new_v4_path ]] && ask string is_new_v4_path "  请输入新 xhttp 路径:"
         [[ $REPLY == "0" ]] && return
         v4_path=$is_new_v4_path
         add $net
         ;;
     2)
         # new uuid
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_uuid
         is_new_uuid=$tmp_uuid
         add $net auto $is_new_uuid
         ;;
     3)
         # new is_private_key is_public_key
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_pbk
         add $net
         ;;
     4)
         # new v4 sni/dest
         is_new_v4_sni=$3
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "请输入新的 v4 目标域名 (SNI/Dest) [0 返回]:"
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
+        [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "  请输入新的 v4 目标域名 (SNI/Dest) [0 返回]:"
         [[ $REPLY == "0" ]] && return
         v4_sni=$is_new_v4_sni
         add $net
@@ -665,47 +656,49 @@ change() {
     5)
         # new v6 sni/dest
         is_new_v6_sni=$3
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
-        [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "请输入新的 v6 目标域名 (SNI/Dest) [0 返回]:"
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
+        [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "  请输入新的 v6 目标域名 (SNI/Dest) [0 返回]:"
         [[ $REPLY == "0" ]] && return
         v6_sni=$is_new_v6_sni
         add $net
         ;;
     6)
         # new v4 short ids
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_short_ids
         v4_short_ids=$is_short_ids
         add $net
         ;;
     7)
         # new v6 short ids
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_short_ids
         v6_short_ids=$is_short_ids
         add $net
         ;;
     8)
         # toggle v6only
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         if [[ $v6_only == 'true' ]]; then
             v6_only=false
+            _ok "v6only 已关闭"
         else
             v6_only=true
+            _ok "v6only 已开启"
         fi
         add $net
         ;;
     9)
         # toggle route mode
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改."
+        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         if [[ -f $is_conf_dir/is_v6_uplink ]]; then
             rm -f $is_conf_dir/is_v6_uplink
             unset is_v6_uplink
-            _green "\n切换后的分离类型为: v4上行/v6下行"
+            _ok "分离类型已切换为: v4上行/v6下行"
         else
             touch $is_conf_dir/is_v6_uplink
             export is_v6_uplink=1
-            _green "\n切换后的分离类型为: v6上行/v4下行"
+            _ok "分离类型已切换为: v6上行/v4下行"
         fi
         add $net
         ;;
@@ -723,10 +716,10 @@ del() {
         api del $is_conf_dir/"$is_config_file" $is_dynamic_port_file &>/dev/null
         rm -rf $is_conf_dir/"$is_config_file" $is_dynamic_port_file
         [[ $is_api_fail && ! $is_new_json ]] && manage restart &
-        [[ ! $is_no_del_msg ]] && _green "\n已删除: $is_config_file\n"
+        [[ ! $is_no_del_msg ]] && _ok "已删除: $is_config_file"
     fi
     if [[ ! $(ls $is_conf_dir | grep .json) && ! $is_change ]]; then
-        warn "当前配置目录为空! 因为你刚刚删除了最后一个配置文件."
+        warn "当前配置目录为空! 因为你刚刚删除了最后一个配置文件"
         is_conf_dir_empty=1
     fi
     unset is_dont_get_ip
@@ -735,8 +728,11 @@ del() {
 
 # uninstall
 uninstall() {
-    ask string y "是否卸载 ${is_core_name}? [y]:"
+    echo
+    ask string y "  确认卸载 ${is_core_name}? [y]:"
     [[ $REPLY == "0" ]] && return
+    
+    _step "正在停止 $is_core_name 服务..."
     manage stop &>/dev/null
     manage disable &>/dev/null
     
@@ -744,17 +740,23 @@ uninstall() {
     if [[ -d $is_conf_dir ]]; then
         for v in $(ls $is_conf_dir | grep .json$ | sed '/dynamic-port-.*-link/d'); do
             local p=$(jq -r '.inbounds[0].port' $is_conf_dir/"$v")
-            [[ $(is_test port $p) ]] && close_port $p
+            if [[ $(is_test port $p) ]]; then
+                close_port $p
+                _ok "已关闭防火墙端口: $p"
+            fi
         done
     fi
 
+    _step "正在清理文件..."
     rm -rf $is_core_dir $is_log_dir $is_sh_bin /lib/systemd/system/$is_core.service /etc/init.d/$is_core
     sed -i "/$is_core/d" /root/.bashrc
     systemctl daemon-reload &>/dev/null
     
-    _green "\n卸载完成!"
-    msg "脚本哪里需要完善? 请反馈"
-    msg "反馈问题) $(msg_ul https://github.com/${is_sh_repo}/issues)\n"
+    echo
+    _ok "$is_core_name 卸载完成"
+    _info "脚本哪里需要完善? 请反馈"
+    _info "反馈问题: $(msg_ul https://github.com/${is_sh_repo}/issues)"
+    echo
 }
 
 # manage run status
@@ -789,11 +791,11 @@ manage() {
         if [[ ! $(pgrep -f $is_run_bin) ]]; then
             is_run_fail=${is_do_name_msg,,}
             [[ ! $is_no_manage_msg ]] && {
-                msg
-                warn "($is_do_msg) $is_do_name_msg 失败"
-                _yellow "检测到运行失败, 自动执行测试运行."
+                echo
+                _fail "($is_do_msg) $is_do_name_msg 失败"
+                _info "检测到运行失败, 自动执行测试运行..."
                 get test-run
-                _yellow "测试结束, 请按 Enter 退出."
+                _info "测试结束, 请按 Enter 退出"
             }
         fi
     }
@@ -801,9 +803,9 @@ manage() {
 
 # use api add or del inbounds
 api() {
-    [[ ! $1 ]] && err "无法识别 API 的参数."
+    [[ ! $1 ]] && err "无法识别 API 的参数"
     [[ $is_core_stop ]] && {
-        warn "$is_core_name 当前处于停止状态."
+        warn "$is_core_name 当前处于停止状态"
         is_api_fail=1
         return
     }
@@ -825,7 +827,7 @@ api() {
     [[ ! $is_api_port ]] && {
         is_api_port=$(jq '.inbounds[] | select(.tag == "api") | .port' $is_config_json)
         [[ $? != 0 ]] && {
-            warn "读取 API 端口失败, 无法使用 API 操作."
+            warn "读取 API 端口失败, 无法使用 API 操作"
             return
         }
     }
@@ -866,16 +868,16 @@ add() {
 
         if [[ $is_use_port ]]; then
             [[ ! $(is_test port ${is_use_port}) ]] && {
-                err "($is_use_port) 不是一个有效的端口."
+                err "($is_use_port) 不是一个有效的端口"
             }
             [[ $(is_test port_used $is_use_port) ]] && {
-                err "无法使用 ($is_use_port) 端口."
+                err "无法使用 ($is_use_port) 端口"
             }
             port=$is_use_port
         fi
         if [[ $is_use_uuid ]]; then
             [[ ! $(is_test uuid $is_use_uuid) ]] && {
-                err "($is_use_uuid) 不是一个有效的 UUID."
+                err "($is_use_uuid) 不是一个有效的 UUID"
             }
             uuid=$is_use_uuid
         fi
@@ -909,16 +911,16 @@ get() {
         [[ ! $is_private_key ]] && get_pbk
         if [[ $is_new_install ]]; then
             is_default_arg="v4上行/v6下行"
-            ask list is_route_mode "v4上行/v6下行 v6上行/v4下行" "\n请选择首选的流向模式:" "请选择 (默认: v4上行/v6下行):"
+            ask list is_route_mode "v4上行/v6下行 v6上行/v4下行" "\n  请选择首选的流向模式:" "  请选择 (默认: v4上行/v6下行):"
             if [[ $is_route_mode == "v6上行/v4下行" ]]; then
                 export is_v6_uplink=1
                 touch $is_conf_dir/is_v6_uplink
             fi
             is_default_arg="empty_allowed"
-            ask string is_new_v4_sni "请输入 v4 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            ask string is_new_v4_sni "  请输入 v4 目标域名 (SNI/Dest) [直接回车随机生成]:"
             [[ $is_new_v4_sni ]] && export v4_sni=$is_new_v4_sni
             is_default_arg="empty_allowed"
-            ask string is_new_v6_sni "请输入 v6 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            ask string is_new_v6_sni "  请输入 v6 目标域名 (SNI/Dest) [直接回车随机生成]:"
             [[ $is_new_v6_sni ]] && export v6_sni=$is_new_v6_sni
         fi
         if [[ ! $v4_sni || ! $v6_sni ]]; then
@@ -977,7 +979,8 @@ get() {
         fi
         ;;
     log | logerr)
-        msg "\n 提醒: 按 $(_green Ctrl + C) 退出\n"
+        _info "按 ${green}Ctrl + C${none} 退出日志查看"
+        echo
         trap "echo '退出日志查看...'" INT
         if [[ $1 == 'log' ]]; then
             tail -f $is_log_dir/access.log
@@ -989,21 +992,22 @@ get() {
     test-run)
         systemctl list-units --full -all &>/dev/null
         [[ $? != 0 ]] && {
-            _yellow "\n无法执行测试, 请检查 systemctl 状态.\n"
+            _fail "无法执行测试, 请检查 systemctl 状态"
             return
         }
         is_no_manage_msg=1
         if [[ ! $(pgrep -f $is_core_bin) ]]; then
-            _yellow "\n测试运行 $is_core_name ..\n"
+            _step "测试运行 $is_core_name ..."
             manage start &>/dev/null
             if [[ $is_run_fail == $is_core ]]; then
-                _red "$is_core_name 运行失败信息:"
+                _fail "$is_core_name 运行失败，错误信息:"
+                echo
                 $is_core_bin run -c $is_config_json -confdir $is_conf_dir
             else
-                _green "\n测试通过, 已启动 $is_core_name ..\n"
+                _ok "测试通过, 已启动 $is_core_name"
             fi
         else
-            _green "\n$is_core_name 正在运行, 跳过测试\n"
+            _ok "$is_core_name 正在运行, 跳过测试"
         fi
         ;;
     esac
@@ -1137,7 +1141,7 @@ EOF
 
 # footer msg
 footer_msg() {
-    [[ $is_core_stop && ! $is_new_json ]] && warn "$is_core_name 当前处于停止状态."
+    [[ $is_core_stop && ! $is_new_json ]] && warn "$is_core_name 当前处于停止状态"
 }
 
 # update core, sh
@@ -1161,29 +1165,31 @@ update() {
     esac
     [[ $2 ]] && is_new_ver=v${2#v}
     [[ $is_run_ver == $is_new_ver ]] && {
-        msg "\n自定义版本和当前 $is_show_name 版本一样, 无需更新.\n"
+        _info "自定义版本和当前 $is_show_name 版本一样, 无需更新"
         return
     }
     load download.sh
     if [[ $is_new_ver ]]; then
-        msg "\n使用自定义版本更新 $is_show_name: $(_green $is_new_ver)\n"
+        _step "使用自定义版本更新 $is_show_name: $(_green $is_new_ver)"
     else
         get_latest_version $is_update_name
         is_new_ver=$latest_ver
         [[ $is_run_ver == $is_new_ver ]] && {
-            msg "\n当前 $is_show_name 已经是最新版本: $(_green $is_run_ver)\n"
+            _ok "当前 $is_show_name 已是最新版本: $(_green $is_run_ver)"
             return
         }
-        msg "\n发现 $is_show_name 新版本: $(_green $is_new_ver) ... 准备更新\n"
+        _step "发现 $is_show_name 新版本: $(_green $is_new_ver)"
     fi
+    _step "正在下载更新..."
     download $is_update_name $is_new_ver
-    _green "\n$is_show_name 更新成功!"
+    _ok "$is_show_name 更新成功: $(_green $is_new_ver)"
     [[ $is_update_name == 'core' ]] && {
         manage restart &
         is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
+        _ok "$is_core_name 已重启"
     }
     [[ $is_update_name == 'sh' ]] && {
-        _green "\n脚本已更新，正在重新加载..."
+        _ok "脚本已更新，正在重新加载..."
         sleep 1
         exec $is_sh_bin
     }
@@ -1204,60 +1210,129 @@ _reset_state() {
     unset is_core_stop
     # re-check core status
     if [[ $(pgrep -f $is_core_bin) ]]; then
-        is_core_status=$(_green running)
+        is_core_status="${green}● 运行中${none}"
+        is_core_status_short="${green}运行中${none}"
     else
-        is_core_status=$(_red_bg stopped)
+        is_core_status="${red}● 已停止${none}"
+        is_core_status_short="${red}已停止${none}"
         is_core_stop=1
     fi
 }
 
-show_ports_info() {
+# get overview info for main menu
+_get_overview() {
+    _ov_port=""
+    _ov_protocol=""
+    _ov_v4_sni=""
+    _ov_v6_sni=""
+    _ov_v6only=""
+    _ov_route_mode=""
+    _ov_log_level=""
+    _ov_fw_ports=""
+    _ov_sys_ports=""
+
+    # parse first config file
+    if [[ -d $is_conf_dir ]]; then
+        local first_json=$(ls $is_conf_dir 2>/dev/null | grep '.json$' | sed '/dynamic-port-.*-link/d' | head -1)
+        if [[ $first_json && -f $is_conf_dir/$first_json ]]; then
+            local json_str=$(cat $is_conf_dir/$first_json)
+            _ov_port=$(jq -r '.inbounds[0].port // ""' <<<$json_str 2>/dev/null)
+            _ov_protocol=$(jq -r '.inbounds[0].protocol // ""' <<<$json_str 2>/dev/null)
+            _ov_v4_sni=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
+            _ov_v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
+            local v6o=$(jq -r '.inbounds[1].streamSettings.sockopt.v6only // false' <<<$json_str 2>/dev/null)
+            [[ "$v6o" == "true" ]] && _ov_v6only="${green}开启${none}" || _ov_v6only="${gray}关闭${none}"
+        fi
+    fi
+
+    # route mode
+    if [[ -f $is_conf_dir/is_v6_uplink ]]; then
+        _ov_route_mode="v6上行/v4下行"
+    else
+        _ov_route_mode="v4上行/v6下行"
+    fi
+
+    # log level
+    if [[ -f $is_config_json ]]; then
+        _ov_log_level=$(jq -r '.log.loglevel // "unknown"' $is_config_json 2>/dev/null)
+    fi
+
+    # firewall ports
     local fw_ports_v4=""
     if [[ $(type -P iptables) ]]; then
         fw_ports_v4=$(iptables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
     fi
-    
     local fw_ports_v6=""
     if [[ $(type -P ip6tables) ]]; then
         fw_ports_v6=$(ip6tables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
     fi
-    
-    local all_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo)
-    
-    local xray_ports=""
+    _ov_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo)
+    [[ ! $_ov_fw_ports ]] && _ov_fw_ports="${gray}无${none}"
+
+    # system listening ports
     local core_name=${is_core:-xray}
-    
-    if [[ $(type -P netstat) ]]; then
-        xray_ports=$(netstat -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
-    elif [[ $(type -P ss) ]]; then
-        xray_ports=$(ss -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+    if [[ $(type -P ss) ]]; then
+        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+    elif [[ $(type -P netstat) ]]; then
+        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
     fi
-    
-    _green "\n当前防火墙 (iptables) 已放行的端口有: ${all_fw_ports:-无}"
-    if [[ $xray_ports ]]; then
-        _green "当前 Xray 运行占用的端口为: $xray_ports\n"
-    else
-        _yellow "目前 Xray 似乎未运行或未占用任何端口.\n"
-    fi
+    [[ ! $_ov_sys_ports ]] && _ov_sys_ports="${gray}无${none}"
 }
 
 is_main_menu() {
     while :; do
         _reset_state
+        _get_overview
         clear
-        msg "================================================="
-        msg "\n$(_green $is_core_ver) / $(_cyan $is_core_name script $is_sh_ver)\n"
-        msg "================================================="
-        msg "\n$(_green 1.) 更改配置"
-        msg "$(_green 2.) 查看配置"
-        msg "========================"
-        msg "$(_green 3.) 查看运行状态"
-        msg "$(_green 4.) 运行管理"
-        msg "$(_green 5.) 更新"
-        msg "$(_green 6.) 卸载"
-        msg "========================"
-        msg "$(_green 7.) 其他"
-        msg "\n请选择 [0 退出]:"
+
+        # ── header ──
+        echo
+        _line
+        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
+        _line
+
+        # ── config overview ──
+        if [[ $_ov_port ]]; then
+            _kv "协议:" "${_ov_protocol^^}-REALITY"
+            _kv "端口:" "$_ov_port"
+            _kv "v4 SNI:" "$_ov_v4_sni"
+            _kv "v6 SNI:" "$_ov_v6_sni"
+            _kv "v6only:" "$_ov_v6only"
+            _kv "分离模式:" "$_ov_route_mode"
+            _kv "日志等级:" "$_ov_log_level"
+            _line
+            _kv "防火墙放行:" "$_ov_fw_ports"
+            _kv "Xray 端口:" "$_ov_sys_ports"
+        else
+            echo -e "  ${gray}暂无配置${none}"
+        fi
+        _line
+
+        # ── menu items ──
+        _section "节点管理"
+        _menu 1 "更改配置"
+        _menu 2 "查看配置"
+
+        _section "运行控制"
+        _menu 3 "启动 / 停止 / 重启"
+        _menu 4 "查看运行状态"
+        _menu 5 "测试运行"
+
+        _section "日志"
+        _menu 6 "查看日志"
+        _menu 7 "查看错误日志"
+        _menu 8 "修改日志等级"
+
+        _section "防火墙"
+        _menu 9 "放行端口"
+        _menu 10 "关闭端口"
+
+        _section "系统"
+        _menu 11 "更新"
+        _menu 12 "卸载"
+
+        echo
+        echo -ne "  请选择 [${green}1-12${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1272,78 +1347,72 @@ is_main_menu() {
             pause
             ;;
         3)
+            echo
+            ask list is_do_manage "启动 停止 重启"
+            [[ $REPLY == "0" ]] && continue
+            manage $REPLY &
+            _ok "执行操作: $is_do_manage"
+            sleep 2
+            ;;
+        4)
+            echo
             systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
-        4)
-            ask list is_do_manage "启动 停止 重启"
+        5)
+            echo
+            get test-run
+            pause
+            ;;
+        6)
+            get log
+            ;;
+        7)
+            get logerr
+            ;;
+        8)
+            echo
+            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:" "  请选择:"
             [[ $REPLY == "0" ]] && continue
-            manage $REPLY &
-            msg "\n管理状态执行: $(_green $is_do_manage)\n"
+            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
+            _ok "日志等级已修改为: $is_log_level"
+            manage restart &
             sleep 1
             ;;
-        5)
+        9)
+            echo
+            ask string p "  请输入要放行的端口 (1-65535):"
+            if [[ $(is_test port $p) ]]; then
+                open_port $p
+                _ok "已放行端口: $p"
+            else
+                _fail "无效的端口"
+            fi
+            pause
+            ;;
+        10)
+            echo
+            ask string p "  请输入要关闭的端口 (1-65535):"
+            if [[ $(is_test port $p) ]]; then
+                close_port $p
+                _ok "已关闭端口: $p"
+            else
+                _fail "无效的端口"
+            fi
+            pause
+            ;;
+        11)
+            echo
             is_tmp_list=("更新$is_core_name" "更新脚本")
-            ask list is_do_update null "\n请选择更新:\n"
+            ask list is_do_update null "\n  请选择更新:\n"
             [[ $REPLY == "0" ]] && continue
             update $REPLY
             pause
             ;;
-        6)
+        12)
             uninstall
             exit 0
-            ;;
-        7)
-            ask list is_do_other "查看日志 查看错误日志 测试运行 修改日志等级 切换v6only 放行端口 关闭端口"
-            [[ $REPLY == "0" ]] && continue
-            case $REPLY in
-            1)
-                get log
-                ;;
-            2)
-                get logerr
-                ;;
-            3)
-                get test-run
-                pause
-                ;;
-            4)
-                ask list is_log_level "debug info warning error none" "\n请选择日志等级:" "请选择:"
-                [[ $REPLY == "0" ]] && continue
-                sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
-                _green "\n已将日志等级修改为: $is_log_level\n"
-                manage restart &
-                sleep 1
-                ;;
-            5)
-                is_change_id=8
-                change
-                pause
-                ;;
-            6)
-                show_ports_info
-                ask string p "请输入要放行的端口 (1-65535):"
-                if [[ $(is_test port $p) ]]; then
-                    open_port $p
-                    _green "\n已放行端口: $p\n"
-                else
-                    _red "\n无效的端口!\n"
-                fi
-                pause
-                ;;
-            7)
-                show_ports_info
-                ask string p "请输入要关闭的端口 (1-65535):"
-                if [[ $(is_test port $p) ]]; then
-                    close_port $p
-                    _green "\n已关闭端口: $p\n"
-                else
-                    _red "\n无效的端口!\n"
-                fi
-                pause
-                ;;
-            esac
             ;;
         esac
     done

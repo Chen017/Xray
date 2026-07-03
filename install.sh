@@ -3,7 +3,7 @@
 author=Chen017
 # github=https://github.com/233boy/xray
 
-# bash fonts colors
+# ─── bash fonts colors ────────────────────────────────────
 red='\e[31m'
 yellow='\e[33m'
 gray='\e[90m'
@@ -11,36 +11,46 @@ green='\e[92m'
 blue='\e[94m'
 magenta='\e[95m'
 cyan='\e[96m'
+bold='\e[1m'
+dim='\e[2m'
 none='\e[0m'
-_red() { echo -e ${red}$@${none}; }
-_blue() { echo -e ${blue}$@${none}; }
-_cyan() { echo -e ${cyan}$@${none}; }
-_green() { echo -e ${green}$@${none}; }
-_yellow() { echo -e ${yellow}$@${none}; }
-_magenta() { echo -e ${magenta}$@${none}; }
+
+_red() { echo -e "${red}$@${none}"; }
+_blue() { echo -e "${blue}$@${none}"; }
+_cyan() { echo -e "${cyan}$@${none}"; }
+_green() { echo -e "${green}$@${none}"; }
+_yellow() { echo -e "${yellow}$@${none}"; }
+_magenta() { echo -e "${magenta}$@${none}"; }
+_gray() { echo -e "${gray}$@${none}"; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
-is_err=$(_red_bg 错误!)
-is_warn=$(_red_bg 警告!)
+_line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
+_ok() { echo -e "  ${green}[✓]${none} $@"; }
+_fail() { echo -e "  ${red}[✗]${none} $@"; }
+_info() { echo -e "  ${cyan}[i]${none} $@"; }
+_step() { echo -e "  ${blue}>>>${none} $@"; }
+
+is_err="${red}[错误]${none}"
+is_warn="${yellow}[警告]${none}"
 
 err() {
-    echo -e "\n$is_err $@\n" && exit 1
+    echo -e "\n  ${red}[错误]${none} $@\n" && exit 1
 }
 
 warn() {
-    echo -e "\n$is_warn $@\n"
+    echo -e "\n  ${yellow}[警告]${none} $@\n"
 }
 
 # root
-[[ $EUID != 0 ]] && err "当前非 ${yellow}ROOT用户.${none}"
+[[ $EUID != 0 ]] && err "当前非 ${yellow}ROOT用户${none}, 请使用 root 权限运行"
 
 # yum or apt-get, ubuntu/debian/centos
 cmd=$(type -P apt-get || type -P yum)
-[[ ! $cmd ]] && err "此脚本仅支持 ${yellow}(Ubuntu or Debian or CentOS)${none}."
+[[ ! $cmd ]] && err "此脚本仅支持 ${yellow}Ubuntu / Debian / CentOS${none}"
 
 # systemd
 [[ ! $(type -P systemctl) ]] && {
-    err "此系统缺少 ${yellow}(systemctl)${none}, 请尝试执行:${yellow} ${cmd} update -y;${cmd} install systemd -y ${none}来修复此错误."
+    err "此系统缺少 ${yellow}systemctl${none}, 请尝试执行:\n         ${yellow}${cmd} update -y; ${cmd} install systemd -y${none}"
 }
 
 # wget installed or none
@@ -57,7 +67,7 @@ amd64 | x86_64)
     is_core_arch="arm64-v8a"
     ;;
 *)
-    err "此脚本仅支持 64 位系统..."
+    err "此脚本仅支持 64 位系统"
     ;;
 esac
 
@@ -105,31 +115,36 @@ _wget() {
     wget --no-check-certificate $*
 }
 
-# print a mesage
+# print a message
 msg() {
     case $1 in
     warn)
-        local color=$yellow
+        _step "${2}"
         ;;
     err)
-        local color=$red
+        _fail "${2}"
         ;;
     ok)
-        local color=$green
+        _ok "${2}"
         ;;
     esac
-
-    echo -e "${color}$(date +'%T')${none}) ${2}"
 }
 
 # show help msg
 show_help() {
-    echo -e "Usage: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
-    echo -e "  -f, --core-file <path>          自定义 $is_core_name 文件路径, e.g., -f /root/${is_core}-linux-64.zip"
-    echo -e "  -l, --local-install             本地获取安装脚本, 使用当前目录"
-    echo -e "  -p, --proxy <addr>              使用代理下载, e.g., -p http://127.0.0.1:2333"
-    echo -e "  -v, --core-version <ver>        自定义 $is_core_name 版本, e.g., -v v1.8.1"
-    echo -e "  -h, --help                      显示此帮助界面\n"
+    echo
+    _line
+    echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}安装脚本${none}"
+    _line
+    echo
+    echo -e "  用法: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
+    echo
+    echo -e "  ${green}-f, --core-file${none} <path>    自定义 $is_core_name 文件路径"
+    echo -e "  ${green}-l, --local-install${none}       本地获取安装脚本, 使用当前目录"
+    echo -e "  ${green}-p, --proxy${none} <addr>        使用代理下载, e.g., http://127.0.0.1:2333"
+    echo -e "  ${green}-v, --core-version${none} <ver>  自定义 $is_core_name 版本, e.g., v1.8.1"
+    echo -e "  ${green}-h, --help${none}                显示此帮助界面"
+    echo
 
     exit 0
 }
@@ -142,7 +157,7 @@ install_pkg() {
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')
-        msg warn "正在静默下载并安装必要依赖包... >${pkg}"
+        _step "正在安装依赖包:${pkg}"
         $cmd install -y $pkg &>/dev/null
         if [[ $? != 0 ]]; then
             [[ $cmd =~ yum ]] && yum install epel-release -y &>/dev/null
@@ -181,7 +196,7 @@ download() {
         ;;
     esac
 
-    msg warn "下载 ${name} > ${link}"
+    _step "下载 ${name} ..."
     if _wget -t 3 -q --show-progress -c $link -O $tmpfile; then
         mv -f $tmpfile $is_ok
     fi
@@ -197,23 +212,23 @@ get_ip() {
 check_status() {
     # dependent pkg install fail
     [[ ! -f $is_pkg_ok ]] && {
-        msg err "安装依赖包失败"
-        msg err "请尝试手动安装依赖包: $cmd update -y; $cmd install -y $is_pkg"
+        _fail "安装依赖包失败"
+        _info "请尝试手动安装: ${yellow}${cmd} update -y; ${cmd} install -y $is_pkg${none}"
         is_fail=1
     }
 
     # download file status
     if [[ $is_wget ]]; then
         [[ ! -f $is_core_ok ]] && {
-            msg err "下载 ${is_core_name} 失败"
+            _fail "下载 ${is_core_name} 失败"
             is_fail=1
         }
         [[ ! -f $is_sh_ok ]] && {
-            msg err "下载 ${is_core_name} 脚本失败"
+            _fail "下载 ${is_core_name} 脚本失败"
             is_fail=1
         }
         [[ ! -f $is_jq_ok ]] && {
-            msg err "下载 jq 失败"
+            _fail "下载 jq 失败"
             is_fail=1
         }
     else
@@ -239,30 +254,30 @@ pass_args() {
         case $1 in
         -f | --core-file)
             [[ -z $2 ]] && {
-                err "($1) 缺少必需参数, 正确使用示例: [$1 /root/$is_core-linux-64.zip]"
+                err "($1) 缺少必需参数, 正确使用示例: $1 /root/$is_core-linux-64.zip"
             } || [[ ! -f $2 ]] && {
-                err "($2) 不是一个常规的文件."
+                err "($2) 不是一个常规的文件"
             }
             is_core_file=$2
             shift 2
             ;;
         -l | --local-install)
             [[ ! -f ${PWD}/src/core.sh || ! -f ${PWD}/$is_core.sh ]] && {
-                err "当前目录 (${PWD}) 非完整的脚本目录."
+                err "当前目录 (${PWD}) 非完整的脚本目录"
             }
             local_install=1
             shift 1
             ;;
         -p | --proxy)
             [[ -z $2 ]] && {
-                err "($1) 缺少必需参数, 正确使用示例: [$1 http://127.0.0.1:2333 or -p socks5://127.0.0.1:2333]"
+                err "($1) 缺少必需参数, 正确使用示例: $1 http://127.0.0.1:2333"
             }
             proxy=$2
             shift 2
             ;;
         -v | --core-version)
             [[ -z $2 ]] && {
-                err "($1) 缺少必需参数, 正确使用示例: [$1 v1.8.1]"
+                err "($1) 缺少必需参数, 正确使用示例: $1 v1.8.1"
             }
             is_core_ver=v${2#v}
             shift 2
@@ -271,13 +286,13 @@ pass_args() {
             show_help
             ;;
         *)
-            echo -e "\n${is_err} ($@) 为未知参数...\n"
+            echo -e "\n  ${red}[错误]${none} ($@) 为未知参数\n"
             show_help
             ;;
         esac
     done
     [[ $is_core_ver && $is_core_file ]] && {
-        err "无法同时自定义 ${is_core_name} 版本和 ${is_core_name} 文件."
+        err "无法同时自定义 ${is_core_name} 版本和 ${is_core_name} 文件"
     }
 }
 
@@ -285,9 +300,9 @@ pass_args() {
 exit_and_del_tmpdir() {
     rm -rf $tmpdir
     [[ ! $1 ]] && {
-        msg err "哦豁.."
-        msg err "安装过程出现错误..."
-        echo -e "反馈问题) https://github.com/${is_sh_repo}/issues"
+        echo
+        _fail "安装过程出现错误"
+        _info "反馈问题: https://github.com/${is_sh_repo}/issues"
         echo
         exit 1
     }
@@ -299,7 +314,7 @@ main() {
 
     # check old version
     [[ -f $is_sh_bin && -d $is_core_dir/bin && -d $is_sh_dir && -d $is_conf_dir ]] && {
-        err "检测到脚本已安装, 如需重装请先运行${green} ${is_core} ${none}进入主菜单卸载后重新安装."
+        err "检测到脚本已安装, 如需重装请先运行 ${green}${is_core}${none} 进入主菜单卸载后重新安装"
     }
 
     # check parameters
@@ -308,24 +323,26 @@ main() {
     # show welcome msg
     clear
     echo
-    echo "........... $is_core_name script by $author .........."
+    _line
+    echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}安装程序${none}  ${dim}by ${author}${none}"
+    _line
     echo
 
     # start installing...
-    msg warn "开始安装..."
-    [[ $is_core_ver ]] && msg warn "${is_core_name} 版本: ${yellow}$is_core_ver${none}"
-    [[ $proxy ]] && msg warn "使用代理: ${yellow}$proxy${none}"
+    _step "开始安装..."
+    [[ $is_core_ver ]] && _info "${is_core_name} 版本: ${yellow}$is_core_ver${none}"
+    [[ $proxy ]] && _info "使用代理: ${yellow}$proxy${none}"
     # create tmpdir
     mkdir -p $tmpdir
     # if is_core_file, copy file
     [[ $is_core_file ]] && {
         cp -f $is_core_file $is_core_ok
-        msg warn "${yellow}${is_core_name} 文件使用 > $is_core_file${none}"
+        _info "${is_core_name} 文件: $is_core_file"
     }
     # local dir install sh script
     [[ $local_install ]] && {
         >$is_sh_ok
-        msg warn "${yellow}本地获取安装脚本 > $PWD ${none}"
+        _info "本地安装: $PWD"
     }
 
     # install dependent pkg
@@ -355,21 +372,21 @@ main() {
     if [[ $is_core_file ]]; then
         unzip -qo $is_core_ok -d $tmpdir/testzip &>/dev/null
         [[ $? != 0 ]] && {
-            msg err "${is_core_name} 文件无法通过测试."
+            _fail "${is_core_name} 文件无法通过测试"
             exit_and_del_tmpdir
         }
         for i in ${is_core} geoip.dat geosite.dat; do
             [[ ! -f $tmpdir/testzip/$i ]] && is_file_err=1 && break
         done
         [[ $is_file_err ]] && {
-            msg err "${is_core_name} 文件无法通过测试."
+            _fail "${is_core_name} 文件无法通过测试"
             exit_and_del_tmpdir
         }
     fi
 
     # get server ip.
     [[ ! $ip ]] && {
-        msg err "获取服务器 IP 失败."
+        _fail "获取服务器 IP 失败"
         exit_and_del_tmpdir
     }
 
@@ -407,8 +424,7 @@ main() {
     # create log dir
     mkdir -p $is_log_dir
 
-    # show a tips msg
-    msg ok "正在安装并配置 systemd 守护进程服务..."
+    _ok "正在配置 systemd 守护进程..."
 
     # create systemd service
     load systemd.sh
@@ -420,22 +436,28 @@ main() {
 
     load core.sh
     # create a tcp config
-    msg ok "正在配置端口并生成核心节点证书凭证..."
+    _step "正在生成节点配置与密钥..."
     add reality
     
     # 启用 BBR
     load bbr.sh
-    msg ok "正在尝试为服务器网络启用 BBR 拥塞加速优化..."
+    _step "正在启用 BBR 拥塞控制优化..."
     _try_enable_bbr
     
-    msg ok "正在启动 $is_core_name 服务并检测运行状态..."
+    _step "正在启动 $is_core_name 服务..."
     sleep 1.5
     if [[ $(pgrep -f $is_core_bin) ]]; then
-        msg ok "$is_core_name 后台服务已成功启动运行!"
+        _ok "$is_core_name 服务已成功启动"
     else
-        msg err "$is_core_name 核心启动可能遇到异常，请稍后使用 xray 命令进入控制面板查看状态."
+        _fail "$is_core_name 启动可能遇到异常，请运行 ${yellow}xray${none} 查看状态"
     fi
     
+    echo
+    _line
+    _ok "安装完成! 输入 ${green}xray${none} 进入管理面板"
+    _line
+    echo
+
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok
 }

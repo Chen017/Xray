@@ -3,7 +3,7 @@
 author=Chen017
 # github=https://github.com/233boy/xray
 
-# bash fonts colors
+# ─── bash fonts colors ────────────────────────────────────
 red='\e[31m'
 yellow='\e[33m'
 gray='\e[90m'
@@ -11,27 +11,49 @@ green='\e[92m'
 blue='\e[94m'
 magenta='\e[95m'
 cyan='\e[96m'
+bold='\e[1m'
+dim='\e[2m'
 none='\e[0m'
 
-_red() { echo -e ${red}$@${none}; }
-_blue() { echo -e ${blue}$@${none}; }
-_cyan() { echo -e ${cyan}$@${none}; }
-_green() { echo -e ${green}$@${none}; }
-_yellow() { echo -e ${yellow}$@${none}; }
-_magenta() { echo -e ${magenta}$@${none}; }
+_red() { echo -e "${red}$@${none}"; }
+_blue() { echo -e "${blue}$@${none}"; }
+_cyan() { echo -e "${cyan}$@${none}"; }
+_green() { echo -e "${green}$@${none}"; }
+_yellow() { echo -e "${yellow}$@${none}"; }
+_magenta() { echo -e "${magenta}$@${none}"; }
+_gray() { echo -e "${gray}$@${none}"; }
+_bold() { echo -e "${bold}$@${none}"; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
-is_err=$(_red_bg 错误!)
-is_warn=$(_red_bg 警告!)
+# ─── formatted output helpers ─────────────────────────────
+_line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
+_section() { echo -e "${cyan} ── $@ ──${none}"; }
+_menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
+_kv() { printf "  ${gray}%-14s${none}%s\n" "$1" "$2"; }
+_ok() { echo -e "  ${green}[✓]${none} $@"; }
+_fail() { echo -e "  ${red}[✗]${none} $@"; }
+_info() { echo -e "  ${cyan}[i]${none} $@"; }
+_step() { echo -e "  ${blue}>>>${none} $@"; }
+
+is_err="${red}[错误]${none}"
+is_warn="${yellow}[警告]${none}"
 
 err() {
-    echo -e "\n$is_err $@\n"
+    echo -e "\n  ${red}[错误]${none} $@\n"
     [[ $is_dont_auto_exit ]] && return
     exit 1
 }
 
 warn() {
-    echo -e "\n$is_warn $@\n"
+    echo -e "\n  ${yellow}[警告]${none} $@\n"
+}
+
+# pause
+pause() {
+    echo
+    echo -ne "  ${gray}按 ${green}Enter${gray} 继续, 或 ${red}Ctrl+C${gray} 取消 ...${none}"
+    read -rs -d $'\n'
+    echo
 }
 
 # load bash script.
@@ -78,12 +100,25 @@ is_config_json=$is_core_dir/config.json
 is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
 
 if [[ $(pgrep -f $is_core_bin) ]]; then
-    is_core_status=$(_green running)
+    is_core_status="${green}● 运行中${none}"
+    is_core_status_short="${green}运行中${none}"
 else
-    is_core_status=$(_red_bg stopped)
+    is_core_status="${red}● 已停止${none}"
+    is_core_status_short="${red}已停止${none}"
     is_core_stop=1
+fi
+
+# ─── Happy Eyeballs migration ────────────────────────────
+# Auto-upgrade domainStrategy from UseIPv4 to UseIPv4v6
+# This runs on every script load to ensure existing installs get the update
+if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
+    _current_ds=$(jq -r '.outbounds[]? | select(.tag == "direct") | .settings.domainStrategy // empty' "$is_config_json" 2>/dev/null)
+    if [[ "$_current_ds" == "UseIPv4" ]]; then
+        jq '(.outbounds[] | select(.tag == "direct") | .settings.domainStrategy) = "UseIPv4v6"' "$is_config_json" > "${is_config_json}.tmp" && \
+        mv -f "${is_config_json}.tmp" "$is_config_json" 2>/dev/null
+    fi
+    unset _current_ds
 fi
 
 load core.sh
 is_main_menu
-
