@@ -29,7 +29,7 @@ _red_bg() { echo -e "\e[41m$@${none}"; }
 _line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
 _section() { echo -e "${cyan} ── $@ ──${none}"; }
 _menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
-_kv() { printf "  ${gray}%-14s${none}%s\n" "$1" "$2"; }
+_kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
 _ok() { echo -e "  ${green}[✓]${none} $@"; }
 _fail() { echo -e "  ${red}[✗]${none} $@"; }
 _info() { echo -e "  ${cyan}[i]${none} $@"; }

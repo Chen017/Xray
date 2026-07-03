@@ -1222,7 +1222,6 @@ _reset_state() {
 # get overview info for main menu
 _get_overview() {
     _ov_port=""
-    _ov_protocol=""
     _ov_v4_sni=""
     _ov_v6_sni=""
     _ov_v6only=""
@@ -1230,6 +1229,11 @@ _get_overview() {
     _ov_log_level=""
     _ov_fw_ports=""
     _ov_sys_ports=""
+    _ov_v4_sids=""
+    _ov_v6_sids=""
+    _ov_path=""
+    _ov_pbk=""
+    _ov_uuid=""
 
     # parse first config file
     if [[ -d $is_conf_dir ]]; then
@@ -1237,11 +1241,17 @@ _get_overview() {
         if [[ $first_json && -f $is_conf_dir/$first_json ]]; then
             local json_str=$(cat $is_conf_dir/$first_json)
             _ov_port=$(jq -r '.inbounds[0].port // ""' <<<$json_str 2>/dev/null)
-            _ov_protocol=$(jq -r '.inbounds[0].protocol // ""' <<<$json_str 2>/dev/null)
             _ov_v4_sni=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
             _ov_v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
+            
+            _ov_v4_sids=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds | join(",") // ""' <<<$json_str 2>/dev/null)
+            _ov_v6_sids=$(jq -r '.inbounds[1].streamSettings.realitySettings.shortIds | join(",") // ""' <<<$json_str 2>/dev/null)
+            _ov_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$json_str 2>/dev/null)
+            _ov_pbk=$(jq -r '.inbounds[0].streamSettings.realitySettings.publicKey // ""' <<<$json_str 2>/dev/null)
+            _ov_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' <<<$json_str 2>/dev/null)
+            
             local v6o=$(jq -r '.inbounds[1].streamSettings.sockopt.v6only // false' <<<$json_str 2>/dev/null)
-            [[ "$v6o" == "true" ]] && _ov_v6only="${green}开启${none}" || _ov_v6only="${gray}关闭${none}"
+            [[ "$v6o" == "true" ]] && _ov_v6only="开启" || _ov_v6only="关闭"
         fi
     fi
 
@@ -1266,17 +1276,16 @@ _get_overview() {
     if [[ $(type -P ip6tables) ]]; then
         fw_ports_v6=$(ip6tables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
     fi
-    _ov_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo)
-    [[ ! $_ov_fw_ports ]] && _ov_fw_ports="${gray}无${none}"
+    _ov_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo | sed 's/ /, /g')
+    [[ ! $_ov_fw_ports ]] && _ov_fw_ports="无"
 
     # system listening ports
-    local core_name=${is_core:-xray}
     if [[ $(type -P ss) ]]; then
-        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+        _ov_sys_ports=$(ss -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
     elif [[ $(type -P netstat) ]]; then
-        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep "$core_name" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo)
+        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
     fi
-    [[ ! $_ov_sys_ports ]] && _ov_sys_ports="${gray}无${none}"
+    [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
 }
 
 is_main_menu() {
@@ -1293,16 +1302,20 @@ is_main_menu() {
 
         # ── config overview ──
         if [[ $_ov_port ]]; then
-            _kv "协议:" "${_ov_protocol^^}-REALITY"
-            _kv "端口:" "$_ov_port"
-            _kv "v4 SNI:" "$_ov_v4_sni"
-            _kv "v6 SNI:" "$_ov_v6_sni"
-            _kv "v6only:" "$_ov_v6only"
-            _kv "分离模式:" "$_ov_route_mode"
-            _kv "日志等级:" "$_ov_log_level"
-            _line
-            _kv "防火墙放行:" "$_ov_fw_ports"
-            _kv "Xray 端口:" "$_ov_sys_ports"
+            local short_pbk="$_ov_pbk"
+            if [[ ${#short_pbk} -gt 25 ]]; then
+                short_pbk="${short_pbk:0:15}...${short_pbk:(-5)}"
+            fi
+            
+            local v6o_color="${gray}关闭${none}"
+            [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
+
+            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}"
+            echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
+            echo -e "  ${cyan}[ v4 ]${none} SNI: ${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
+            echo -e "  ${cyan}[ v6 ]${none} SNI: ${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
+            echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
+            echo -e "  ${cyan}[状态]${none} 防火墙放行: ${green}$_ov_fw_ports${none}   系统占用: ${green}$_ov_sys_ports${none}"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi
@@ -1373,7 +1386,7 @@ is_main_menu() {
             ;;
         8)
             echo
-            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:" "  请选择:"
+            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:"
             [[ $REPLY == "0" ]] && continue
             sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
             _ok "日志等级已修改为: $is_log_level"
@@ -1382,7 +1395,8 @@ is_main_menu() {
             ;;
         9)
             echo
-            ask string p "  请输入要放行的端口 (1-65535):"
+            ask string p "  请输入要放行的端口 (1-65535) [0 返回]:"
+            [[ $REPLY == "0" ]] && continue
             if [[ $(is_test port $p) ]]; then
                 open_port $p
                 _ok "已放行端口: $p"
@@ -1393,7 +1407,8 @@ is_main_menu() {
             ;;
         10)
             echo
-            ask string p "  请输入要关闭的端口 (1-65535):"
+            ask string p "  请输入要关闭的端口 (1-65535) [0 返回]:"
+            [[ $REPLY == "0" ]] && continue
             if [[ $(is_test port $p) ]]; then
                 close_port $p
                 _ok "已关闭端口: $p"
