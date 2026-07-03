@@ -51,7 +51,7 @@ warn() {
 # pause
 pause() {
     echo
-    echo -ne "  ${gray}按 ${green}Enter${gray} 继续, 或 ${red}Ctrl+C${gray} 取消 ...${none}"
+    echo -ne "  ${gray}按 ${green}Enter${gray} 返回主菜单, 或 ${red}Ctrl+C${gray} 退出脚本 ...${none}"
     read -rs -d $'\n'
     echo
 }

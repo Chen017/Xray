@@ -979,14 +979,18 @@ get() {
         fi
         ;;
     log | logerr)
-        _info "按 ${green}Ctrl + C${none} 退出日志查看"
         echo
-        trap "echo '退出日志查看...'" INT
+        _info "按 ${green}Enter${none} 返回主菜单, 或 ${red}Ctrl+C${none} 退出脚本"
+        echo
+        trap "exit 0" INT
         if [[ $1 == 'log' ]]; then
-            tail -f $is_log_dir/access.log $is_log_dir/error.log
+            tail -f $is_log_dir/access.log $is_log_dir/error.log &
         else
-            tail -f $is_log_dir/error.log
+            tail -f $is_log_dir/error.log &
         fi
+        local tail_pid=$!
+        read -rs -d $'\n'
+        kill $tail_pid &>/dev/null
         trap - INT
         ;;
     test-run)
@@ -1295,7 +1299,6 @@ is_main_menu() {
         clear
 
         # ── header ──
-        echo
         _line
         echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
         _line
@@ -1360,11 +1363,14 @@ is_main_menu() {
             ;;
         3)
             echo
+            ask list is_view_mode "预览(支持滚动) 输出(打印全部)" "\n  请选择查看方式:"
+            [[ $REPLY == "0" ]] && continue
+            echo
             _step "完整服务端配置如下 (自动合并 config.json 及独立节点配置):"
             echo
             local merged_json=$(jq -s '.[0] + {inbounds: [.[1:][].inbounds[]?]}' $is_config_json $is_conf_dir/*.json 2>/dev/null)
             if [[ $merged_json ]]; then
-                if command -v less &>/dev/null; then
+                if [[ $is_view_mode == "预览(支持滚动)" ]] && command -v less &>/dev/null; then
                     echo "$merged_json" | jq -C . | less -R
                 else
                     echo "$merged_json" | jq -C .
