@@ -983,7 +983,7 @@ get() {
         echo
         trap "echo '退出日志查看...'" INT
         if [[ $1 == 'log' ]]; then
-            tail -f $is_log_dir/access.log
+            tail -f $is_log_dir/access.log $is_log_dir/error.log
         else
             tail -f $is_log_dir/error.log
         fi
@@ -1281,9 +1281,9 @@ _get_overview() {
 
     # system listening ports
     if [[ $(type -P ss) ]]; then
-        _ov_sys_ports=$(ss -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
+        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
     elif [[ $(type -P netstat) ]]; then
-        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
+        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | sed -n 's/.*:\([0-9]\+\).*/\1/p' | sort -nu | xargs echo | sed 's/ /, /g')
     fi
     [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
 }
@@ -1324,28 +1324,27 @@ is_main_menu() {
         # ── menu items ──
         _section "节点管理"
         _menu 1 "更改配置"
-        _menu 2 "查看配置"
+        _menu 2 "查看客户端配置"
+        _menu 3 "查看完整服务端配置"
 
         _section "运行控制"
-        _menu 3 "启动 / 停止 / 重启"
-        _menu 4 "查看运行状态"
-        _menu 5 "测试运行"
+        _menu 4 "启动 / 停止 / 重启"
+        _menu 5 "查看运行状态"
+        _menu 6 "测试运行"
 
         _section "日志"
-        _menu 6 "查看日志"
-        _menu 7 "查看错误日志"
+        _menu 7 "查看综合日志"
         _menu 8 "修改日志等级"
 
         _section "防火墙"
-        _menu 9 "放行端口"
-        _menu 10 "关闭端口"
+        _menu 9 "端口管理 (放行/关闭)"
 
         _section "系统"
-        _menu 11 "更新"
-        _menu 12 "卸载"
+        _menu 10 "更新"
+        _menu 11 "卸载"
 
         echo
-        echo -ne "  请选择 [${green}1-12${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-11${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1361,28 +1360,41 @@ is_main_menu() {
             ;;
         3)
             echo
+            _step "完整服务端配置如下 (自动合并 config.json 及独立节点配置):"
+            echo
+            local merged_json=$(jq -s '.[0] + {inbounds: [.[1:][].inbounds[]?]}' $is_config_json $is_conf_dir/*.json 2>/dev/null)
+            if [[ $merged_json ]]; then
+                if command -v less &>/dev/null; then
+                    echo "$merged_json" | jq -C . | less -R
+                else
+                    echo "$merged_json" | jq -C .
+                fi
+            else
+                _fail "无法读取或合并配置文件"
+            fi
+            pause
+            ;;
+        4)
+            echo
             ask list is_do_manage "启动 停止 重启"
             [[ $REPLY == "0" ]] && continue
             manage $REPLY &
             _ok "执行操作: $is_do_manage"
             sleep 2
             ;;
-        4)
+        5)
             echo
             systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
-        5)
+        6)
             echo
             get test-run
             pause
             ;;
-        6)
-            get log
-            ;;
         7)
-            get logerr
+            get log
             ;;
         8)
             echo
@@ -1395,29 +1407,24 @@ is_main_menu() {
             ;;
         9)
             echo
-            ask string p "  请输入要放行的端口 (1-65535) [0 返回]:"
+            ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
             [[ $REPLY == "0" ]] && continue
-            if [[ $(is_test port $p) ]]; then
-                open_port $p
-                _ok "已放行端口: $p"
+            local action=$(echo $p | awk '{print $1}')
+            local port=$(echo $p | awk '{print $2}')
+            if [[ ($action == "o" || $action == "c") ]] && [[ $(is_test port $port) ]]; then
+                if [[ $action == "o" ]]; then
+                    open_port $port
+                    _ok "已放行端口: $port"
+                else
+                    close_port $port
+                    _ok "已关闭端口: $port"
+                fi
             else
-                _fail "无效的端口"
+                _fail "无效的指令或端口格式"
             fi
             pause
             ;;
         10)
-            echo
-            ask string p "  请输入要关闭的端口 (1-65535) [0 返回]:"
-            [[ $REPLY == "0" ]] && continue
-            if [[ $(is_test port $p) ]]; then
-                close_port $p
-                _ok "已关闭端口: $p"
-            else
-                _fail "无效的端口"
-            fi
-            pause
-            ;;
-        11)
             echo
             is_tmp_list=("更新$is_core_name" "更新脚本")
             ask list is_do_update null "\n  请选择更新:\n"
@@ -1425,7 +1432,7 @@ is_main_menu() {
             update $REPLY
             pause
             ;;
-        12)
+        11)
             uninstall
             exit 0
             ;;
