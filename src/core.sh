@@ -1350,10 +1350,8 @@ is_main_menu() {
         _menu 7 "查看综合日志"
         _menu 8 "修改日志等级"
 
-        _section "防火墙"
-        _menu 9 "端口管理 (放行/关闭)"
-
         _section "系统"
+        _menu 9 "端口管理 (放行/关闭)"
         _menu 10 "更新"
         _menu 11 "卸载"
 
