@@ -2,7 +2,7 @@
 
 本项目是一款专为双栈（IPv4/IPv6）回国路线优秀的服务器设计的 Xray 一键安装管理脚本。基于**VLESS-REALITY + XHTTP** 架构，支持 **IPv4/IPv6 上下行分流**来最大化伪装。
 
-![](image.png)
+<img src="image.png" width="400" />
 
 ## 🚀 核心配置特点
 
