@@ -1223,8 +1223,33 @@ _reset_state() {
     fi
 }
 
+_check_ip_blocked() {
+    if [[ $_ov_ip_blocked ]]; then
+        return
+    fi
+    _ov_ip_blocked="检测中..."
+    local check_urls=(
+        "sh-cm-dualstack.ip.zstaticcdn.com/80"
+        "sh-cu-dualstack.ip.zstaticcdn.com/80"
+        "sh-ct-dualstack.ip.zstaticcdn.com/80"
+    )
+    local is_blocked=1
+    for url in "${check_urls[@]}"; do
+        if timeout 2 bash -c "echo > /dev/tcp/$url" &>/dev/null; then
+            is_blocked=0
+            break
+        fi
+    done
+    if [[ $is_blocked == 0 ]]; then
+        _ov_ip_blocked="${green}正常${none}"
+    else
+        _ov_ip_blocked="${red}可能被墙${none}"
+    fi
+}
+
 # get overview info for main menu
 _get_overview() {
+    _check_ip_blocked
     _ov_port=""
     _ov_v4_sni=""
     _ov_v6_sni=""
@@ -1303,6 +1328,105 @@ _get_overview() {
     [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
 }
 
+test_sni() {
+    echo
+    if [[ ! $_ov_v4_sni || ! $_ov_v6_sni ]]; then
+        _fail "无法获取当前 SNI，请先配置节点"
+        return
+    fi
+    _step "正在测试 v4 SNI ($_ov_v4_sni) 连通性..."
+    local res_v4=$(curl -I -s -m 5 --ipv4 "https://$_ov_v4_sni" 2>&1)
+    if [[ $? == 0 || $res_v4 == *"HTTP/"* ]]; then
+        _ok "v4 SNI 可用 (目标有响应)"
+    else
+        _fail "v4 SNI 不可用 (超时或无响应)"
+    fi
+    
+    echo
+    _step "正在测试 v6 SNI ($_ov_v6_sni) 连通性..."
+    local res_v6=$(curl -I -s -m 5 --ipv6 "https://$_ov_v6_sni" 2>&1)
+    if [[ $? == 0 || $res_v6 == *"HTTP/"* ]]; then
+        _ok "v6 SNI 可用 (目标有响应)"
+    else
+        _fail "v6 SNI 不可用 (超时或无响应)"
+    fi
+    echo
+}
+
+misc_menu() {
+    while :; do
+        clear
+        echo
+        _line
+        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
+        _line
+        
+        _section "杂项管理"
+        _menu 1 "测试运行"
+        _menu 2 "查看综合日志"
+        _menu 3 "修改日志等级"
+        _menu 4 "端口管理 (放行/关闭)"
+        _menu 5 "更新"
+        _menu 6 "卸载"
+        
+        echo
+        echo -ne "  请选择 [${green}1-6${none}] [${red}0 返回主菜单${none}]: "
+        read REPLY
+        [[ "$REPLY" == "0" ]] && return
+        
+        case $REPLY in
+        1)
+            echo
+            get test-run
+            pause
+            ;;
+        2)
+            get log
+            ;;
+        3)
+            echo
+            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:"
+            [[ $REPLY == "0" ]] && continue
+            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
+            _ok "日志等级已修改为: $is_log_level"
+            manage restart &
+            sleep 1
+            ;;
+        4)
+            echo
+            ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
+            [[ $REPLY == "0" ]] && continue
+            local action=$(echo $p | awk '{print $1}')
+            local port=$(echo $p | awk '{print $2}')
+            if [[ ($action == "o" || $action == "c") ]] && [[ $(is_test port $port) ]]; then
+                if [[ $action == "o" ]]; then
+                    open_port $port
+                    _ok "已放行端口: $port"
+                else
+                    close_port $port
+                    _ok "已关闭端口: $port"
+                fi
+            else
+                _fail "无效的指令或端口格式"
+            fi
+            pause
+            ;;
+        5)
+            echo
+            is_tmp_list=("更新$is_core_name" "更新脚本")
+            ask list is_do_update null "\n  请选择更新:\n"
+            [[ $REPLY == "0" ]] && continue
+            update $REPLY
+            pause
+            ;;
+        6)
+            uninstall
+            exit 0
+            ;;
+        esac
+    done
+}
+
 is_main_menu() {
     while :; do
         _reset_state
@@ -1329,7 +1453,7 @@ is_main_menu() {
             echo -e "  ${cyan}[ v4 ]${none} SNI: ${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
             echo -e "  ${cyan}[ v6 ]${none} SNI: ${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}[状态]${none} 防火墙放行: ${green}$_ov_fw_ports${none}   系统占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  ${cyan}[状态]${none} 连通性: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi
@@ -1344,19 +1468,13 @@ is_main_menu() {
         _section "运行控制"
         _menu 4 "启动 / 停止 / 重启"
         _menu 5 "查看运行状态"
-        _menu 6 "测试运行"
+        _menu 6 "测试伪装 SNI 可用性"
 
-        _section "日志"
-        _menu 7 "查看综合日志"
-        _menu 8 "修改日志等级"
-
-        _section "系统"
-        _menu 9 "端口管理 (放行/关闭)"
-        _menu 10 "更新"
-        _menu 11 "卸载"
+        _section "杂项"
+        _menu 7 "杂项管理 (包含日志/更新等)"
 
         echo
-        echo -ne "  请选择 [${green}1-11${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1404,52 +1522,11 @@ is_main_menu() {
             pause
             ;;
         6)
-            echo
-            get test-run
+            test_sni
             pause
             ;;
         7)
-            get log
-            ;;
-        8)
-            echo
-            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:"
-            [[ $REPLY == "0" ]] && continue
-            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
-            _ok "日志等级已修改为: $is_log_level"
-            manage restart &
-            sleep 1
-            ;;
-        9)
-            echo
-            ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
-            [[ $REPLY == "0" ]] && continue
-            local action=$(echo $p | awk '{print $1}')
-            local port=$(echo $p | awk '{print $2}')
-            if [[ ($action == "o" || $action == "c") ]] && [[ $(is_test port $port) ]]; then
-                if [[ $action == "o" ]]; then
-                    open_port $port
-                    _ok "已放行端口: $port"
-                else
-                    close_port $port
-                    _ok "已关闭端口: $port"
-                fi
-            else
-                _fail "无效的指令或端口格式"
-            fi
-            pause
-            ;;
-        10)
-            echo
-            is_tmp_list=("更新$is_core_name" "更新脚本")
-            ask list is_do_update null "\n  请选择更新:\n"
-            [[ $REPLY == "0" ]] && continue
-            update $REPLY
-            pause
-            ;;
-        11)
-            uninstall
-            exit 0
+            misc_menu
             ;;
         esac
     done
