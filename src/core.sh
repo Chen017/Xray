@@ -1228,6 +1228,7 @@ _check_ip_blocked() {
         return
     fi
     _ov_ip_blocked="检测中..."
+    _ov_ip_warning=""
     local check_urls=(
         "sh-cm-dualstack.ip.zstaticcdn.com/80"
         "sh-cu-dualstack.ip.zstaticcdn.com/80"
@@ -1241,9 +1242,10 @@ _check_ip_blocked() {
         fi
     done
     if [[ $is_blocked == 0 ]]; then
-        _ov_ip_blocked="${green}正常${none}"
+        _ov_ip_blocked="${green}✓${none} "
     else
-        _ov_ip_blocked="${red}可能被墙${none}"
+        _ov_ip_blocked="${red}✗${none} "
+        _ov_ip_warning="  [警告] 当前服务器 IP 的部分国内测速节点超时，可能已被 GFW 阻断！\n"
     fi
 }
 
@@ -1265,7 +1267,7 @@ _check_sni_status() {
 
     if [[ $_ov_v4_sni ]]; then
         (
-            res=$(echo | timeout 3 openssl s_client -4 -connect $_ov_v4_sni:443 -servername $_ov_v4_sni -alpn h2 -tls1_3 2>&1)
+            res=$(echo | timeout 3 openssl s_client -connect $_ov_v4_sni:443 -servername $_ov_v4_sni -alpn h2 -tls1_3 2>&1)
             if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
                 echo "OK"
             else
@@ -1277,7 +1279,7 @@ _check_sni_status() {
 
     if [[ $_ov_v6_sni ]]; then
         (
-            res=$(echo | timeout 3 openssl s_client -6 -connect $_ov_v6_sni:443 -servername $_ov_v6_sni -alpn h2 -tls1_3 2>&1)
+            res=$(echo | timeout 3 openssl s_client -connect $_ov_v6_sni:443 -servername $_ov_v6_sni -alpn h2 -tls1_3 2>&1)
             if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
                 echo "OK"
             else
@@ -1495,7 +1497,7 @@ is_main_menu() {
             echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}[状态]${none} 连通性: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi
@@ -1514,9 +1516,10 @@ is_main_menu() {
         _section "杂项"
         _menu 6 "杂项管理 (包含日志/更新等)"
 
-        if [[ $_ov_sni_warning ]]; then
+        if [[ $_ov_ip_warning || $_ov_sni_warning ]]; then
             echo
-            echo -ne "${red}${_ov_sni_warning}${none}"
+            [[ $_ov_ip_warning ]] && echo -ne "${red}${_ov_ip_warning}${none}"
+            [[ $_ov_sni_warning ]] && echo -ne "${red}${_ov_sni_warning}${none}"
         fi
 
         echo
