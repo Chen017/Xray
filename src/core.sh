@@ -1334,22 +1334,44 @@ test_sni() {
         _fail "无法获取当前 SNI，请先配置节点"
         return
     fi
-    _step "正在测试 v4 SNI ($_ov_v4_sni) 连通性..."
-    local res_v4=$(curl -I -s -m 5 --ipv4 "https://$_ov_v4_sni" 2>&1)
-    if [[ $? == 0 || $res_v4 == *"HTTP/"* ]]; then
-        _ok "v4 SNI 可用 (目标有响应)"
-    else
-        _fail "v4 SNI 不可用 (超时或无响应)"
-    fi
     
+    _check_sni() {
+        local sni=$1
+        local ip_ver=$2
+        local flag=""
+        [[ $ip_ver == "v4" ]] && flag="-4"
+        [[ $ip_ver == "v6" ]] && flag="-6"
+        
+        _step "正在测试 $ip_ver SNI ($sni) 的 TLS 特性..."
+        local res=$(echo | timeout 5 openssl s_client $flag -connect $sni:443 -servername $sni -alpn h2 -tls1_3 2>&1)
+        
+        if echo "$res" | grep -iqE "Connection timed out|Connection refused|No route to host|Name or service not known"; then
+            _fail "$ip_ver SNI ($sni) 无法连通或解析失败！"
+            return
+        fi
+        
+        local is_tls13=0
+        local is_h2=0
+        
+        if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
+            is_tls13=1
+        fi
+        if echo "$res" | grep -qE "ALPN protocol: h2"; then
+            is_h2=1
+        fi
+        
+        if [[ $is_tls13 == 1 && $is_h2 == 1 ]]; then
+            _ok "$sni 完美支持 TLS 1.3 和 H2 ALPN，是非常理想的 REALITY 伪装域名！"
+        elif [[ $is_tls13 == 1 ]]; then
+            _ok "$sni 支持 TLS 1.3，但未检测到 H2 ALPN。可以使用，但不如支持 H2 的完美。"
+        else
+            _fail "$sni 不支持 TLS 1.3 或握手失败，强烈建议更换以确保 REALITY 安全！"
+        fi
+    }
+    
+    _check_sni "$_ov_v4_sni" "v4"
     echo
-    _step "正在测试 v6 SNI ($_ov_v6_sni) 连通性..."
-    local res_v6=$(curl -I -s -m 5 --ipv6 "https://$_ov_v6_sni" 2>&1)
-    if [[ $? == 0 || $res_v6 == *"HTTP/"* ]]; then
-        _ok "v6 SNI 可用 (目标有响应)"
-    else
-        _fail "v6 SNI 不可用 (超时或无响应)"
-    fi
+    _check_sni "$_ov_v6_sni" "v6"
     echo
 }
 
