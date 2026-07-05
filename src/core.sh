@@ -1267,9 +1267,13 @@ _check_sni_status() {
 
     if [[ $_ov_v4_sni ]]; then
         (
-            res=$(echo | timeout 3 openssl s_client -connect $_ov_v4_sni:443 -servername $_ov_v4_sni -alpn h2 -tls1_3 2>&1)
-            if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
-                echo "OK"
+            if curl -s -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v4_sni" 2>/dev/null; then
+                res=$(echo | timeout 3 openssl s_client -connect $_ov_v4_sni:443 -servername $_ov_v4_sni -alpn h2 -tls1_3 2>&1)
+                if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
+                    echo "OK"
+                else
+                    echo "FAIL"
+                fi
             else
                 echo "FAIL"
             fi
@@ -1279,9 +1283,13 @@ _check_sni_status() {
 
     if [[ $_ov_v6_sni ]]; then
         (
-            res=$(echo | timeout 3 openssl s_client -connect $_ov_v6_sni:443 -servername $_ov_v6_sni -alpn h2 -tls1_3 2>&1)
-            if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
-                echo "OK"
+            if curl -s -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v6_sni" 2>/dev/null; then
+                res=$(echo | timeout 3 openssl s_client -connect $_ov_v6_sni:443 -servername $_ov_v6_sni -alpn h2 -tls1_3 2>&1)
+                if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
+                    echo "OK"
+                else
+                    echo "FAIL"
+                fi
             else
                 echo "FAIL"
             fi
@@ -1297,7 +1305,7 @@ _check_sni_status() {
             _ov_v4_sni_status="${green}✓${none} "
         else
             _ov_v4_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 无法连通或不支持 TLS 1.3，强烈建议更换！\n"
+            _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 证书不受信、无法连通或不支持 TLS 1.3，强烈建议更换！\n"
         fi
         rm -f "$v4_tmp"
     fi
@@ -1307,7 +1315,7 @@ _check_sni_status() {
             _ov_v6_sni_status="${green}✓${none} "
         else
             _ov_v6_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 无法连通或不支持 TLS 1.3，强烈建议更换！\n"
+            _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 证书不受信、无法连通或不支持 TLS 1.3，强烈建议更换！\n"
         fi
         rm -f "$v6_tmp"
     fi
