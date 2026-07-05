@@ -1247,6 +1247,70 @@ _check_ip_blocked() {
     fi
 }
 
+_check_sni_status() {
+    if [[ $_ov_sni_checked ]]; then
+        return
+    fi
+    _ov_sni_checked=1
+    
+    _ov_v4_sni_status=""
+    _ov_v6_sni_status=""
+    _ov_sni_warning=""
+
+    local v4_tmp="/tmp/.v4_sni_res_$$"
+    local v6_tmp="/tmp/.v6_sni_res_$$"
+
+    local pid_v4=""
+    local pid_v6=""
+
+    if [[ $_ov_v4_sni ]]; then
+        (
+            res=$(echo | timeout 3 openssl s_client -4 -connect $_ov_v4_sni:443 -servername $_ov_v4_sni -alpn h2 -tls1_3 2>&1)
+            if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
+                echo "OK"
+            else
+                echo "FAIL"
+            fi
+        ) > "$v4_tmp" &
+        pid_v4=$!
+    fi
+
+    if [[ $_ov_v6_sni ]]; then
+        (
+            res=$(echo | timeout 3 openssl s_client -6 -connect $_ov_v6_sni:443 -servername $_ov_v6_sni -alpn h2 -tls1_3 2>&1)
+            if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
+                echo "OK"
+            else
+                echo "FAIL"
+            fi
+        ) > "$v6_tmp" &
+        pid_v6=$!
+    fi
+
+    [[ $pid_v4 ]] && wait $pid_v4
+    [[ $pid_v6 ]] && wait $pid_v6
+
+    if [[ $_ov_v4_sni ]]; then
+        if [[ -f $v4_tmp && $(cat "$v4_tmp") == "OK" ]]; then
+            _ov_v4_sni_status="${green}✓${none} "
+        else
+            _ov_v4_sni_status="${red}✗${none} "
+            _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 无法连通或不支持 TLS 1.3，强烈建议更换！\n"
+        fi
+        rm -f "$v4_tmp"
+    fi
+
+    if [[ $_ov_v6_sni ]]; then
+        if [[ -f $v6_tmp && $(cat "$v6_tmp") == "OK" ]]; then
+            _ov_v6_sni_status="${green}✓${none} "
+        else
+            _ov_v6_sni_status="${red}✗${none} "
+            _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 无法连通或不支持 TLS 1.3，强烈建议更换！\n"
+        fi
+        rm -f "$v6_tmp"
+    fi
+}
+
 # get overview info for main menu
 _get_overview() {
     _check_ip_blocked
@@ -1326,54 +1390,10 @@ _get_overview() {
             }' | sort -nu | xargs echo | sed 's/ /, /g')
     fi
     [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
+    
+    _check_sni_status
 }
 
-test_sni() {
-    echo
-    if [[ ! $_ov_v4_sni || ! $_ov_v6_sni ]]; then
-        _fail "无法获取当前 SNI，请先配置节点"
-        return
-    fi
-    
-    _check_sni() {
-        local sni=$1
-        local ip_ver=$2
-        local flag=""
-        [[ $ip_ver == "v4" ]] && flag="-4"
-        [[ $ip_ver == "v6" ]] && flag="-6"
-        
-        _step "正在测试 $ip_ver SNI ($sni) 的 TLS 特性..."
-        local res=$(echo | timeout 5 openssl s_client $flag -connect $sni:443 -servername $sni -alpn h2 -tls1_3 2>&1)
-        
-        if echo "$res" | grep -iqE "Connection timed out|Connection refused|No route to host|Name or service not known"; then
-            _fail "$ip_ver SNI ($sni) 无法连通或解析失败！"
-            return
-        fi
-        
-        local is_tls13=0
-        local is_h2=0
-        
-        if echo "$res" | grep -qE "Protocol.*TLSv1.3|TLSv1.3"; then
-            is_tls13=1
-        fi
-        if echo "$res" | grep -qE "ALPN protocol: h2"; then
-            is_h2=1
-        fi
-        
-        if [[ $is_tls13 == 1 && $is_h2 == 1 ]]; then
-            _ok "$sni 完美支持 TLS 1.3 和 H2 ALPN，是非常理想的 REALITY 伪装域名！"
-        elif [[ $is_tls13 == 1 ]]; then
-            _ok "$sni 支持 TLS 1.3，但未检测到 H2 ALPN。可以使用，但不如支持 H2 的完美。"
-        else
-            _fail "$sni 不支持 TLS 1.3 或握手失败，强烈建议更换以确保 REALITY 安全！"
-        fi
-    }
-    
-    _check_sni "$_ov_v4_sni" "v4"
-    echo
-    _check_sni "$_ov_v6_sni" "v6"
-    echo
-}
 
 misc_menu() {
     while :; do
@@ -1472,8 +1492,8 @@ is_main_menu() {
 
             echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}"
             echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
-            echo -e "  ${cyan}[ v4 ]${none} SNI: ${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
-            echo -e "  ${cyan}[ v6 ]${none} SNI: ${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
+            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
+            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
             echo -e "  ${cyan}[状态]${none} 连通性: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
@@ -1490,13 +1510,17 @@ is_main_menu() {
         _section "运行控制"
         _menu 4 "启动 / 停止 / 重启"
         _menu 5 "查看运行状态"
-        _menu 6 "测试伪装 SNI 可用性"
 
         _section "杂项"
-        _menu 7 "杂项管理 (包含日志/更新等)"
+        _menu 6 "杂项管理 (包含日志/更新等)"
+
+        if [[ $_ov_sni_warning ]]; then
+            echo
+            echo -ne "${red}${_ov_sni_warning}${none}"
+        fi
 
         echo
-        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-6${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1544,10 +1568,6 @@ is_main_menu() {
             pause
             ;;
         6)
-            test_sni
-            pause
-            ;;
-        7)
             misc_menu
             ;;
         esac
