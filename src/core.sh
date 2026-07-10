@@ -1144,23 +1144,22 @@ info() {
 EOF
     else
         # generate VLESS link
-        local encoded_path=$(printf '%s' "$v4_path" | jq -sRr @uri)
+        local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
         
         local extra_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
-        local encoded_extra=$(printf '%s' "$extra_json" | jq -sRr @uri)
-        
-        local tag="Premium | $(echo $uplink_ip | head -c 15)"
-        local encoded_tag=$(printf '%s' "$tag" | jq -sRr @uri)
+        local encoded_extra=$(printf '%s' "$extra_json" | jq -Rr @uri | tr -d '\n')
         
         local server_addr="$uplink_ip"
         [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
+        
+        local encoded_tag=$(printf '%s' "XHTTP-${uplink_sni}" | jq -Rr @uri | tr -d '\n')
         
         local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#${encoded_tag}"
         
         echo
         _step "VLESS 分享链接:"
         echo
-        echo "$vless_link"
+        printf '%s\n' "$vless_link"
     fi
     
     is_url="$v4_url\n$v6_url" # for url_qr compatibility
