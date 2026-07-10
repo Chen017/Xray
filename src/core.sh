@@ -1152,9 +1152,7 @@ EOF
         local server_addr="$uplink_ip"
         [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
         
-        local encoded_tag="Xray_Premium"
-        
-        local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#${encoded_tag}"
+        local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}"
         
         echo
         _step "VLESS 分享链接:"
