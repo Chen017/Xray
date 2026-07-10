@@ -1144,22 +1144,18 @@ info() {
 EOF
     else
         # generate VLESS link
-        local encoded_path=$(printf '%s' "$v4_path" | sed 's|/|%2F|g')
+        local encoded_path=$(printf '%s' "$v4_path" | jq -sRr @uri)
         
-        local extra_json=$(cat <<EJSON
-{"uplinkHTTPMethod":"PUT","noGRPCHeader":false,"noSSEHeader":false,"xPaddingBytes":"100-1000","xPaddingObfsMode":true,"xPaddingKey":"x_padding","xPaddingHeader":"Referer","xPaddingPlacement":"queryInHeader","xPaddingMethod":"tokenish","sessionPlacement":"path","seqPlacement":"path","xmux":{"maxConcurrency":"16-32","cMaxReuseTimes":0,"hMaxRequestTimes":"600-900","hMaxReusableSecs":"1800-3000","hKeepAlivePeriod":0},"downloadSettings":{"address":"$downlink_ip","port":$port,"network":"xhttp","security":"reality","realitySettings":{"fingerprint":"firefox","serverName":"$downlink_sni","publicKey":"$is_public_key","shortId":"$downlink_sid"},"xhttpSettings":{"host":"$downlink_sni","path":"$v4_path","noGRPCHeader":false,"noSSEHeader":false,"xPaddingBytes":"100-1000","xPaddingObfsMode":true,"xPaddingKey":"x_padding","xPaddingHeader":"Referer","xPaddingPlacement":"queryInHeader","xPaddingMethod":"tokenish","sessionPlacement":"path","seqPlacement":"path","xmux":{"maxConcurrency":"8-16","cMaxReuseTimes":0,"hMaxRequestTimes":"300-600","hMaxReusableSecs":"2400-3600","hKeepAlivePeriod":0}}}}
-EJSON
-)
-        local encoded_extra=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip(),safe=''))" <<< "$extra_json" 2>/dev/null)
-        if [[ ! $encoded_extra ]]; then
-            encoded_extra=$(printf '%s' "$extra_json" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g')
-        fi
+        local extra_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
+        local encoded_extra=$(printf '%s' "$extra_json" | jq -sRr @uri)
         
         local tag="Premium | $(echo $uplink_ip | head -c 15)"
-        local encoded_tag=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip(),safe=''))" <<< "$tag" 2>/dev/null)
-        [[ ! $encoded_tag ]] && encoded_tag="$tag"
+        local encoded_tag=$(printf '%s' "$tag" | jq -sRr @uri)
         
-        local vless_link="vless://${uuid}@${uplink_ip}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#${encoded_tag}"
+        local server_addr="$uplink_ip"
+        [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
+        
+        local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#${encoded_tag}"
         
         echo
         _step "VLESS 分享链接:"
