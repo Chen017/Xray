@@ -1439,9 +1439,12 @@ _get_overview() {
         _ov_route_mode="v4上行/v6下行"
     fi
 
-    # log level
+    # log & outbound strategy
     if [[ -f $is_config_json ]]; then
         _ov_log_level=$(jq -r '.log.loglevel // "unknown"' $is_config_json 2>/dev/null)
+        _ov_outbound_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' $is_config_json 2>/dev/null)
+        [[ "$_ov_outbound_strategy" == "UseIPv4v6" ]] && _ov_outbound_pref="v4优先"
+        [[ "$_ov_outbound_strategy" == "UseIPv6v4" ]] && _ov_outbound_pref="v6优先"
     fi
 
     # firewall ports
@@ -1491,12 +1494,13 @@ misc_menu() {
         _menu 1 "测试运行"
         _menu 2 "查看综合日志"
         _menu 3 "修改日志等级"
-        _menu 4 "端口管理 (放行/关闭)"
-        _menu 5 "更新"
-        _menu 6 "卸载"
+        _menu 4 "切换出站 IP 优先 (IPv4 / IPv6)"
+        _menu 5 "端口管理 (放行/关闭)"
+        _menu 6 "更新"
+        _menu 7 "卸载"
         
         echo
-        echo -ne "  请选择 [${green}1-6${none}] [${red}0 返回主菜单${none}]: "
+        echo -ne "  请选择 [${green}1-7${none}] [${red}0 返回主菜单${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && return
         
@@ -1520,6 +1524,22 @@ misc_menu() {
             ;;
         4)
             echo
+            if [[ "$_ov_outbound_strategy" == "UseIPv4v6" ]]; then
+                ask list is_do_switch "切换为 v6 优先 (UseIPv6v4)" "\n  当前为 v4 优先 (UseIPv4v6)。是否切换为优先使用 IPv6 回国?"
+                [[ $REPLY == "0" ]] && continue
+                sed -i 's/"domainStrategy": "UseIPv4v6"/"domainStrategy": "UseIPv6v4"/g' $is_config_json
+                _ok "已切换出站 IP 优先为: v6优先 (UseIPv6v4)"
+            else
+                ask list is_do_switch "切换为 v4 优先 (UseIPv4v6)" "\n  当前为 v6 优先 (UseIPv6v4)。是否切换为优先使用 IPv4 回国?"
+                [[ $REPLY == "0" ]] && continue
+                sed -i 's/"domainStrategy": "UseIPv6v4"/"domainStrategy": "UseIPv4v6"/g' $is_config_json
+                _ok "已切换出站 IP 优先为: v4优先 (UseIPv4v6)"
+            fi
+            manage restart &
+            sleep 1
+            ;;
+        5)
+            echo
             ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
             [[ $REPLY == "0" ]] && continue
             local action=$(echo $p | awk '{print $1}')
@@ -1537,7 +1557,7 @@ misc_menu() {
             fi
             pause
             ;;
-        5)
+        6)
             echo
             is_tmp_list=("更新$is_core_name" "更新脚本")
             ask list is_do_update null "\n  请选择更新:\n"
@@ -1545,7 +1565,7 @@ misc_menu() {
             update $REPLY
             pause
             ;;
-        6)
+        7)
             uninstall
             exit 0
             ;;
@@ -1574,7 +1594,7 @@ is_main_menu() {
             local v6o_color="${gray}关闭${none}"
             [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
-            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}"
+            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
             echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
             echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
