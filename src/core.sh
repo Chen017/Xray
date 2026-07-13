@@ -1029,9 +1029,9 @@ info() {
     is_color=41
 
     # get active shortId (first non-empty or empty)
-    is_v4_sid=$(jq -r '.[1] // ""' <<<"$v4_short_ids")
+    is_v4_sid=$(jq -r '.[1] // ""' <<<$v4_short_ids)
     [[ "$is_v4_sid" == "null" ]] && is_v4_sid=""
-    is_v6_sid=$(jq -r '.[1] // ""' <<<"$v6_short_ids")
+    is_v6_sid=$(jq -r '.[1] // ""' <<<$v6_short_ids)
     [[ "$is_v6_sid" == "null" ]] && is_v6_sid=""
     
     v4_url="$is_protocol://$uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v4_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v4_sid}#233boy-v4-$is_addr"
@@ -1059,11 +1059,34 @@ info() {
     fi
 
     echo
+    ask list is_deploy_mode "XHTTP双栈分离 仅VisionReality" "\n  请选择部署模式:"
+    [[ $REPLY == "0" ]] && return
+
+    if [[ $is_deploy_mode == "仅VisionReality" ]]; then
+        # ask which SNI for vision-only
+        echo
+        ask list is_vision_sni_choice "v4-SNI($v4_sni) v6-SNI($v6_sni)" "\n  请选择 SNI:"
+        [[ $REPLY == "0" ]] && return
+        if [[ $REPLY == 1 ]]; then
+            local vision_sni=$v4_sni
+            local vision_sid=$is_v4_sid
+        else
+            local vision_sni=$v6_sni
+            local vision_sid=$is_v6_sid
+        fi
+        local vision_ip=$is_addr
+        local vision_addr=$is_addr
+        [[ "$vision_addr" == *:* ]] && vision_addr="[$vision_addr]"
+    fi
+
+    echo
     ask list is_output_format "Mihomo配置 VLESS链接" "\n  请选择输出格式:"
     [[ $REPLY == "0" ]] && return
 
-    if [[ $is_output_format == "Mihomo配置" ]]; then
-        cat <<EOF
+    if [[ $is_deploy_mode == "XHTTP双栈分离" ]]; then
+        # ── XHTTP split mode ──
+        if [[ $is_output_format == "Mihomo配置" ]]; then
+            cat <<EOF
 - name: $is_config_name
   type: vless
   server: "$uplink_ip"
@@ -1142,22 +1165,59 @@ info() {
         h-max-reusable-secs: "2400-3600"
         h-keep-alive-period: 0
 EOF
+        else
+            # generate XHTTP VLESS link
+            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
+            
+            local extra_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
+            local encoded_extra=$(printf '%s' "$extra_json" | jq -Rr @uri | tr -d '\n')
+            
+            local server_addr="$uplink_ip"
+            [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
+            
+            local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#Premium"
+            
+            echo
+            _step "VLESS 分享链接 (XHTTP 分离):"
+            echo
+            printf '%s\n' "$vless_link"
+        fi
     else
-        # generate VLESS link
-        local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-        
-        local extra_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
-        local encoded_extra=$(printf '%s' "$extra_json" | jq -Rr @uri | tr -d '\n')
-        
-        local server_addr="$uplink_ip"
-        [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
-        
-        local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#Premium"
-        
-        echo
-        _step "VLESS 分享链接:"
-        echo
-        printf '%s\n' "$vless_link"
+        # ── Vision Reality only mode ──
+        if [[ $is_output_format == "Mihomo配置" ]]; then
+            cat <<EOF
+- name: Vision-Reality
+  type: vless
+  server: "$vision_ip"
+  port: $port
+  uuid: $uuid
+  network: tcp
+  tls: true
+  udp: true
+  tfo: true
+  mptcp: true
+  packet-encoding: xudp
+  encryption: none
+  flow: xtls-rprx-vision
+  servername: $vision_sni
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: $is_public_key
+    short-id: $vision_sid
+  sockopt:
+    tcp-fast-open: true
+    tcp-no-delay: true
+    tcp-mptcp: true
+EOF
+        else
+            # generate Vision Reality VLESS link
+            local vless_link="vless://${uuid}@${vision_addr}:${port}?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${vision_sni}&fp=chrome&pbk=${is_public_key}&sid=${vision_sid}#Premium"
+            
+            echo
+            _step "VLESS 分享链接 (Vision Reality):"
+            echo
+            printf '%s\n' "$vless_link"
+        fi
     fi
     
     is_url="$v4_url\n$v6_url" # for url_qr compatibility
