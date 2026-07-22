@@ -543,9 +543,292 @@ EOF
     }
 }
 EOF
+        # inject custom rules into config.json if they exist
+        apply_custom_rules
         manage restart &
         ;;
     esac
+}
+
+# ─── custom routing rules management ─────────────────────
+is_custom_rules_file=$is_conf_dir/custom_rules.json
+
+load_custom_rules() {
+    if [[ -f $is_custom_rules_file ]]; then
+        cat $is_custom_rules_file
+    else
+        echo '[]'
+    fi
+}
+
+save_custom_rules() {
+    local rules_json="$1"
+    echo "$rules_json" > $is_custom_rules_file
+}
+
+# parse user input like "DOMAIN-SUFFIX,kimi.ai" into jq-compatible rule fields
+# sets: _rule_field ("domain" or "ip" or "protocol"), _rule_value (xray format value)
+parse_rule_input() {
+    local input="$1"
+    local rule_type=$(echo "$input" | cut -d',' -f1 | tr 'a-z' 'A-Z' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    local rule_val=$(echo "$input" | cut -d',' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    
+    [[ -z "$rule_val" ]] && return 1
+    
+    case $rule_type in
+    DOMAIN)
+        _rule_field="domain"
+        _rule_value="full:$rule_val"
+        ;;
+    DOMAIN-SUFFIX)
+        _rule_field="domain"
+        _rule_value="domain:$rule_val"
+        ;;
+    DOMAIN-KEYWORD)
+        _rule_field="domain"
+        _rule_value="keyword:$rule_val"
+        ;;
+    IP-CIDR)
+        _rule_field="ip"
+        _rule_value="$rule_val"
+        ;;
+    GEOSITE)
+        _rule_field="domain"
+        _rule_value="geosite:$rule_val"
+        ;;
+    GEOIP)
+        _rule_field="ip"
+        _rule_value="geoip:$rule_val"
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+    return 0
+}
+
+# convert internal rule value back to display format
+rule_to_display() {
+    local field="$1"
+    local value="$2"
+    local tag="$3"
+    local action="direct"
+    [[ "$tag" == "block" ]] && action="block"
+    
+    local display_type=""
+    case $field in
+    domain)
+        if [[ "$value" == full:* ]]; then
+            display_type="DOMAIN"
+            value=${value#full:}
+        elif [[ "$value" == domain:* ]]; then
+            display_type="DOMAIN-SUFFIX"
+            value=${value#domain:}
+        elif [[ "$value" == keyword:* ]]; then
+            display_type="DOMAIN-KEYWORD"
+            value=${value#keyword:}
+        elif [[ "$value" == geosite:* ]]; then
+            display_type="GEOSITE"
+            value=${value#geosite:}
+        else
+            display_type="DOMAIN"
+        fi
+        ;;
+    ip)
+        if [[ "$value" == geoip:* ]]; then
+            display_type="GEOIP"
+            value=${value#geoip:}
+        else
+            display_type="IP-CIDR"
+        fi
+        ;;
+    esac
+    echo "$display_type,$value → $action"
+}
+
+# apply custom rules into config.json (insert after geosite:google, before geosite:cn)
+apply_custom_rules() {
+    [[ ! -f $is_config_json ]] && return
+    local rules_json=$(load_custom_rules)
+    
+    # Rebuild routing.rules idempotently with base rules + custom rules
+    local tmp_json=$(jq --argjson custom "$rules_json" '
+        .routing.rules = (
+            [{"type": "field", "domain": ["geosite:google"], "outboundTag": "direct"}] +
+            (if ($custom | type) == "array" then $custom else [] end) +
+            [
+                {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},
+                {"type": "field", "ip": ["geoip:cn", "geoip:private"], "outboundTag": "block"},
+                {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
+            ]
+        )
+    ' $is_config_json)
+    
+    if [[ $? -eq 0 && -n "$tmp_json" ]]; then
+        echo "$tmp_json" > $is_config_json
+    else
+        _fail "注入自定义规则失败"
+    fi
+}
+
+manage_custom_rules() {
+    while :; do
+        clear
+        echo
+        _line
+        echo -e "  ${bold}${cyan}自定义分流规则管理${none}"
+        _line
+        
+        # load and display current rules
+        local rules_json=$(load_custom_rules)
+        local count=$(echo "$rules_json" | jq 'length')
+        
+        if [[ $count -gt 0 && "$count" != "null" ]]; then
+            echo -e "  ${cyan}当前自定义规则 ($count 条):${none}"
+            echo
+            local i=0
+            while [[ $i -lt $count ]]; do
+                local field=$(echo "$rules_json" | jq -r ".[$i] | if .domain then \"domain\" elif .ip then \"ip\" else \"unknown\" end")
+                local value=""
+                if [[ "$field" == "domain" ]]; then
+                    value=$(echo "$rules_json" | jq -r ".[$i].domain[0]")
+                elif [[ "$field" == "ip" ]]; then
+                    value=$(echo "$rules_json" | jq -r ".[$i].ip[0]")
+                fi
+                local tag=$(echo "$rules_json" | jq -r ".[$i].outboundTag")
+                local display=$(rule_to_display "$field" "$value" "$tag")
+                printf "  ${green}%2s)${none} %s\n" "$((i+1))" "$display"
+                ((i++))
+            done
+        else
+            echo -e "  ${gray}暂无自定义规则${none}"
+        fi
+        
+        echo
+        _section "操作"
+        _menu 1 "添加规则"
+        _menu 2 "删除规则"
+        echo
+        echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回${none}]: "
+        read REPLY
+        [[ "$REPLY" == "0" ]] && return
+        
+        case $REPLY in
+        1)
+            # add rule
+            echo
+            echo -e "  ${cyan}支持的规则格式:${none}"
+            echo -e "    ${green}DOMAIN${none},example.com         精确域名匹配"
+            echo -e "    ${green}DOMAIN-SUFFIX${none},example.com  域名后缀匹配"
+            echo -e "    ${green}DOMAIN-KEYWORD${none},example     域名关键词匹配"
+            echo -e "    ${green}IP-CIDR${none},1.2.3.0/24         IP 段匹配"
+            echo -e "    ${green}GEOSITE${none},category            GeoSite 规则集"
+            echo -e "    ${green}GEOIP${none},code                  GeoIP 规则集"
+            echo
+            echo -ne "  请输入规则 (例: ${green}DOMAIN-SUFFIX,kimi.ai${none}) [0 返回]: "
+            read rule_input
+            [[ "$rule_input" == "0" || -z "$rule_input" ]] && continue
+            
+            # validate input format
+            if ! echo "$rule_input" | grep -qE '^[A-Za-z-]+,.+'; then
+                _fail "格式错误，请使用: 类型,值 (例: DOMAIN-SUFFIX,kimi.ai)"
+                pause
+                continue
+            fi
+            
+            # parse rule
+            if ! parse_rule_input "$rule_input"; then
+                _fail "无法识别的规则类型，支持: DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, IP-CIDR, GEOSITE, GEOIP"
+                pause
+                continue
+            fi
+            
+            # ask action
+            echo
+            ask list is_rule_action "放行(direct) 阻止(block)" "\n  请选择动作:"
+            [[ $REPLY == "0" ]] && continue
+            local outbound_tag="direct"
+            [[ $REPLY == 2 ]] && outbound_tag="block"
+            
+            # build new rule json
+            local new_rule=""
+            if [[ "$_rule_field" == "domain" ]]; then
+                new_rule=$(jq -n --arg val "$_rule_value" --arg tag "$outbound_tag" '{
+                    "type": "field",
+                    "domain": [$val],
+                    "outboundTag": $tag
+                }')
+            else
+                new_rule=$(jq -n --arg val "$_rule_value" --arg tag "$outbound_tag" '{
+                    "type": "field",
+                    "ip": [$val],
+                    "outboundTag": $tag
+                }')
+            fi
+            
+            # append to rules file
+            local updated=$(echo "$rules_json" | jq --argjson rule "$new_rule" '. + [$rule]')
+            save_custom_rules "$updated"
+            
+            # re-apply to config.json
+            apply_custom_rules
+            
+            local display=$(rule_to_display "$_rule_field" "$_rule_value" "$outbound_tag")
+            echo
+            _ok "已添加规则: $display"
+            manage restart &
+            sleep 1
+            _ok "配置已更新并重启 Xray"
+            pause
+            ;;
+        2)
+            # delete rule
+            if [[ $count -eq 0 || "$count" == "null" ]]; then
+                echo
+                _fail "当前没有自定义规则可删除"
+                pause
+                continue
+            fi
+            echo
+            echo -ne "  请选择要删除的规则 [${green}1-$count${none}] [${red}0 返回${none}]: "
+            read del_idx
+            [[ "$del_idx" == "0" || -z "$del_idx" ]] && continue
+            
+            # validate index
+            if ! echo "$del_idx" | grep -qE '^[0-9]+$' || [[ $del_idx -lt 1 || $del_idx -gt $count ]]; then
+                _fail "无效的序号"
+                pause
+                continue
+            fi
+            
+            # get display info before delete
+            local di=$((del_idx-1))
+            local d_field=$(echo "$rules_json" | jq -r ".[$di] | if .domain then \"domain\" elif .ip then \"ip\" else \"unknown\" end")
+            local d_value=""
+            if [[ "$d_field" == "domain" ]]; then
+                d_value=$(echo "$rules_json" | jq -r ".[$di].domain[0]")
+            elif [[ "$d_field" == "ip" ]]; then
+                d_value=$(echo "$rules_json" | jq -r ".[$di].ip[0]")
+            fi
+            local d_tag=$(echo "$rules_json" | jq -r ".[$di].outboundTag")
+            local d_display=$(rule_to_display "$d_field" "$d_value" "$d_tag")
+            
+            # delete rule by index
+            local updated=$(echo "$rules_json" | jq "del(.[$di])")
+            save_custom_rules "$updated"
+            
+            # re-apply to config.json
+            apply_custom_rules
+            
+            echo
+            _ok "已删除规则: $d_display"
+            manage restart &
+            sleep 1
+            _ok "配置已更新并重启 Xray"
+            pause
+            ;;
+        esac
+    done
 }
 
 # change config file
@@ -1594,11 +1877,19 @@ is_main_menu() {
             local v6o_color="${gray}关闭${none}"
             [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
+            # count custom rules for overview
+            local _ov_custom_rules=0
+            if [[ -f $is_conf_dir/custom_rules.json ]]; then
+                _ov_custom_rules=$(jq 'length' $is_conf_dir/custom_rules.json 2>/dev/null)
+                [[ "$_ov_custom_rules" == "null" || -z "$_ov_custom_rules" ]] && _ov_custom_rules=0
+            fi
+
             echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
             echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
             echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
+            echo -e "  ${cyan}[分流]${none} 自定义规则: ${green}${_ov_custom_rules} 条${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
             echo -e "  ${gray}暂无配置${none}"
@@ -1609,14 +1900,15 @@ is_main_menu() {
         _section "节点管理"
         _menu 1 "更改配置"
         _menu 2 "查看客户端配置"
-        _menu 3 "查看完整服务端配置"
+        _menu 3 "管理分流规则"
+        _menu 4 "查看完整服务端配置"
 
         _section "运行控制"
-        _menu 4 "启动 / 停止 / 重启"
-        _menu 5 "查看运行状态"
+        _menu 5 "启动 / 停止 / 重启"
+        _menu 6 "查看运行状态"
 
         _section "杂项"
-        _menu 6 "杂项管理 (包含日志/更新等)"
+        _menu 7 "杂项管理 (包含日志/更新等)"
 
         if [[ $_ov_ip_warning || $_ov_sni_warning ]]; then
             echo
@@ -1625,7 +1917,7 @@ is_main_menu() {
         fi
 
         echo
-        echo -ne "  请选择 [${green}1-6${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1640,6 +1932,9 @@ is_main_menu() {
             pause
             ;;
         3)
+            manage_custom_rules
+            ;;
+        4)
             echo
             ask list is_view_mode "预览(支持滚动) 输出(打印全部)" "\n  请选择查看方式:"
             [[ $REPLY == "0" ]] && continue
@@ -1658,7 +1953,7 @@ is_main_menu() {
             fi
             pause
             ;;
-        4)
+        5)
             echo
             ask list is_do_manage "启动 停止 重启"
             [[ $REPLY == "0" ]] && continue
@@ -1666,13 +1961,13 @@ is_main_menu() {
             _ok "执行操作: $is_do_manage"
             sleep 2
             ;;
-        5)
+        6)
             echo
             systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
-        6)
+        7)
             misc_menu
             ;;
         esac
