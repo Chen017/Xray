@@ -1323,7 +1323,7 @@ info() {
     fi
 
     echo
-    ask list is_deploy_mode "XHTTP双栈分离 仅VisionReality" "\n  请选择部署模式:"
+    ask list is_deploy_mode "XHTTP双栈分离 XHTTP单栈 仅VisionReality" "\n  请选择部署模式:"
     [[ $REPLY == "0" ]] && return
 
     if [[ $is_deploy_mode == "仅VisionReality" ]]; then
@@ -1341,6 +1341,21 @@ info() {
         local vision_ip=$is_addr
         local vision_addr=$is_addr
         [[ "$vision_addr" == *:* ]] && vision_addr="[$vision_addr]"
+    elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
+        # ask which SNI for single stack
+        echo
+        ask list is_single_sni_choice "v4-SNI($v4_sni) v6-SNI($v6_sni)" "\n  请选择 SNI:"
+        [[ $REPLY == "0" ]] && return
+        if [[ $REPLY == 1 ]]; then
+            local single_sni=$v4_sni
+            local single_sid=$is_v4_sid
+        else
+            local single_sni=$v6_sni
+            local single_sid=$is_v6_sid
+        fi
+        local single_ip=$is_addr
+        local single_addr=$is_addr
+        [[ "$single_addr" == *:* ]] && single_addr="[$single_addr]"
     fi
 
     echo
@@ -1351,7 +1366,7 @@ info() {
         # ── XHTTP split mode ──
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: $is_config_name
+- name: ${is_config_name} (XHTTP-Split)
   type: vless
   server: "$uplink_ip"
   port: $port
@@ -1378,15 +1393,14 @@ info() {
     mode: stream-up
     host: $uplink_sni
     path: $v4_path
-    no-grpc-header: false
-    no-sse-header: false
     uplink-http-method: PUT
+    no-grpc-header: true
     x-padding-bytes: "100-1000"
     x-padding-obfs-mode: true
-    x-padding-key: x_padding
-    x-padding-header: Referer
     x-padding-placement: queryInHeader
     x-padding-method: tokenish
+    x-padding-key: x_padding
+    x-padding-header: Referer
     session-placement: path
     seq-placement: path
     reuse-settings:
@@ -1406,16 +1420,15 @@ info() {
       reality-opts:
         public-key: $is_public_key
         short-id: $downlink_sid
-      no-grpc-header: false
-      no-sse-header: false
+      no-grpc-header: true
       host: $downlink_sni
       path: $v4_path
       x-padding-bytes: "100-1000"
       x-padding-obfs-mode: true
-      x-padding-key: x_padding
-      x-padding-header: Referer
       x-padding-placement: queryInHeader
       x-padding-method: tokenish
+      x-padding-key: x_padding
+      x-padding-header: Referer
       session-placement: path
       seq-placement: path
       sockopt:
@@ -1430,21 +1443,80 @@ info() {
         h-keep-alive-period: 0
 EOF
         else
-            # generate XHTTP VLESS link
-            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            
-            local extra_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":false,\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
-            local encoded_extra=$(printf '%s' "$extra_json" | jq -Rr @uri | tr -d '\n')
-            
+            # generate XHTTP Split VLESS link
+            local extra_split_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
+            local encoded_extra_split=$(printf '%s' "$extra_split_json" | jq -Rr @uri | tr -d '\n')
             local server_addr="$uplink_ip"
             [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
-            
-            local vless_link="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra}#Premium"
+            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
+            local vless_link_split="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#Premium-Split"
             
             echo
             _step "VLESS 分享链接 (XHTTP 分离):"
             echo
-            printf '%s\n' "$vless_link"
+            printf '%s\n' "$vless_link_split"
+        fi
+    elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
+        # ── XHTTP single mode ──
+        if [[ $is_output_format == "Mihomo配置" ]]; then
+            cat <<EOF
+- name: ${is_config_name} (XHTTP-Single)
+  type: vless
+  server: "$single_ip"
+  port: $port
+  uuid: $uuid
+  network: xhttp
+  tls: true
+  udp: true
+  tfo: true
+  mptcp: true
+  packet-encoding: xudp
+  encryption: none
+  servername: $single_sni
+  client-fingerprint: chrome
+  alpn:
+    - h2
+  reality-opts:
+    public-key: $is_public_key
+    short-id: $single_sid
+  sockopt:
+    tcp-fast-open: true
+    tcp-no-delay: true
+    tcp-mptcp: true
+  xhttp-opts:
+    mode: stream-up
+    host: $single_sni
+    path: $v4_path
+    uplink-http-method: PUT
+    no-grpc-header: true
+    x-padding-bytes: "100-1000"
+    x-padding-obfs-mode: true
+    x-padding-placement: queryInHeader
+    x-padding-method: tokenish
+    x-padding-key: x_padding
+    x-padding-header: Referer
+    session-placement: path
+    seq-placement: path
+    reuse-settings:
+      max-concurrency: "16-32"
+      c-max-reuse-times: 0
+      h-max-request-times: "600-900"
+      h-max-reusable-secs: "1800-3000"
+      h-keep-alive-period: 0
+EOF
+        else
+            # generate XHTTP Single VLESS link
+            local extra_single_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0}}"
+            local encoded_extra_single=$(printf '%s' "$extra_single_json" | jq -Rr @uri | tr -d '\n')
+            local server_addr="$single_ip"
+            [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
+            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
+            local vless_link_single="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#Premium-Single"
+            
+            echo
+            _step "VLESS 分享链接 (XHTTP 单栈):"
+            echo
+            printf '%s\n' "$vless_link_single"
         fi
     else
         # ── Vision Reality only mode ──
