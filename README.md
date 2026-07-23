@@ -20,9 +20,10 @@
 - 安全探针：
   - 自动探测当前服务器 IP 的 GFW 连通性状态。
   - SNI 安全自检：校验伪装域名的证书及 TLS 1.3, h2等。在面板提供 `✓` 或 `✗` 的可视化标记与预警提醒。
-- 安全策略：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与Private IP段。
+- 安全策略与分流：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
 - 配置交互：
   - 支持更改端口（仅支持 443/8443）、路径、UUID、密钥对、各栈 SNI 伪装域名与 ShortIds。
+  - 支持增加与删除自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct` 与阻止 `block`）。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
   - 支持选择 XHTTP 双栈分离或仅 Vision Reality 部署模式，输出对应的 Mihomo YAML 或 VLESS 分享链接。
 - 运维支持：

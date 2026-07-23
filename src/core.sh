@@ -11,6 +11,7 @@ change_list=(
     "重新生成 v6 Short IDs"
     "切换 v6only"
     "切换分离类型"
+    "管理自定义分流规则"
 )
 servername_list=(
     www.magicardshop.jp
@@ -985,6 +986,9 @@ change() {
         fi
         add $net
         ;;
+    10)
+        manage_custom_rules
+        ;;
     esac
 }
 
@@ -1302,7 +1306,7 @@ get() {
 
 # show info
 info() {
-    is_can_change=(0 1 2 3 4 5 6 7 8 9)
+    is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
     if [[ ! $is_protocol ]]; then
         get info $1
     fi
@@ -1877,19 +1881,11 @@ is_main_menu() {
             local v6o_color="${gray}关闭${none}"
             [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
-            # count custom rules for overview
-            local _ov_custom_rules=0
-            if [[ -f $is_conf_dir/custom_rules.json ]]; then
-                _ov_custom_rules=$(jq 'length' $is_conf_dir/custom_rules.json 2>/dev/null)
-                [[ "$_ov_custom_rules" == "null" || -z "$_ov_custom_rules" ]] && _ov_custom_rules=0
-            fi
-
             echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
             echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
             echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}[分流]${none} 自定义规则: ${green}${_ov_custom_rules} 条${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
             echo -e "  ${gray}暂无配置${none}"
@@ -1900,15 +1896,14 @@ is_main_menu() {
         _section "节点管理"
         _menu 1 "更改配置"
         _menu 2 "查看客户端配置"
-        _menu 3 "管理分流规则"
-        _menu 4 "查看完整服务端配置"
+        _menu 3 "查看完整服务端配置"
 
         _section "运行控制"
-        _menu 5 "启动 / 停止 / 重启"
-        _menu 6 "查看运行状态"
+        _menu 4 "启动 / 停止 / 重启"
+        _menu 5 "查看运行状态"
 
         _section "杂项"
-        _menu 7 "杂项管理 (包含日志/更新等)"
+        _menu 6 "杂项管理 (包含日志/更新等)"
 
         if [[ $_ov_ip_warning || $_ov_sni_warning ]]; then
             echo
@@ -1917,7 +1912,7 @@ is_main_menu() {
         fi
 
         echo
-        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-6${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -1932,9 +1927,6 @@ is_main_menu() {
             pause
             ;;
         3)
-            manage_custom_rules
-            ;;
-        4)
             echo
             ask list is_view_mode "预览(支持滚动) 输出(打印全部)" "\n  请选择查看方式:"
             [[ $REPLY == "0" ]] && continue
@@ -1953,7 +1945,7 @@ is_main_menu() {
             fi
             pause
             ;;
-        5)
+        4)
             echo
             ask list is_do_manage "启动 停止 重启"
             [[ $REPLY == "0" ]] && continue
@@ -1961,13 +1953,13 @@ is_main_menu() {
             _ok "执行操作: $is_do_manage"
             sleep 2
             ;;
-        6)
+        5)
             echo
             systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
-        7)
+        6)
             misc_menu
             ;;
         esac
