@@ -36,7 +36,7 @@ get_uuid() {
 get_short_ids() {
     is_short_id_8=$(openssl rand -hex 4)
     is_short_id_16=$(openssl rand -hex 8)
-    is_short_ids='["","'$is_short_id_8'","'$is_short_id_16'"]'
+    is_short_ids='["'$is_short_id_8'","'$is_short_id_16'"]'
 }
 
 get_ip() {
@@ -311,21 +311,10 @@ create() {
                     "privateKey": "$is_private_key",
                     "publicKey": "$is_public_key",
                     "shortIds": ${v4_short_ids:-$is_short_ids},
-                    "maxTimeDiff": 60000,
-                    "limitFallbackUpload": {
-                        "afterBytes": 8192,
-                        "bytesPerSec": 10240,
-                        "burstBytesPerSec": 51200
-                    },
-                    "limitFallbackDownload": {
-                        "afterBytes": 8192,
-                        "bytesPerSec": 10240,
-                        "burstBytesPerSec": 51200
-                    }
+                    "maxTimeDiff": 60000
                 },
                 "sockopt": {
-                    "tcpFastOpen": true,
-                    "tcpCongestion": "bbr"
+                    "tcpFastOpen": true
                 }
             },
             "sniffing": {
@@ -366,21 +355,10 @@ create() {
                     "privateKey": "$is_private_key",
                     "publicKey": "$is_public_key",
                     "shortIds": ${v6_short_ids:-$is_short_ids},
-                    "maxTimeDiff": 60000,
-                    "limitFallbackUpload": {
-                        "afterBytes": 8192,
-                        "bytesPerSec": 10240,
-                        "burstBytesPerSec": 51200
-                    },
-                    "limitFallbackDownload": {
-                        "afterBytes": 8192,
-                        "bytesPerSec": 10240,
-                        "burstBytesPerSec": 51200
-                    }
+                    "maxTimeDiff": 60000
                 },
                 "sockopt": {
-                    "tcpFastOpen": true,
-                    "tcpCongestion": "bbr"
+                    "tcpFastOpen": true
                     $is_v6only_str
                 }
             },
@@ -411,8 +389,8 @@ create() {
                     "host": "",
                     "path": "${v4_path:-/api/v3/updates}",
                     "uplinkHTTPMethod": "PUT",
-                    "noGRPCHeader": false,
-                    "noSSEHeader": false,
+                    "noGRPCHeader": true,
+                    "noSSEHeader": true,
                     "xPaddingBytes": "100-1000",
                     "xPaddingObfsMode": true,
                     "xPaddingPlacement": "queryInHeader",
@@ -422,7 +400,6 @@ create() {
                     "sessionPlacement": "path",
                     "seqPlacement": "path",
                     "scStreamUpServerSecs": "20-80",
-                    "serverMaxHeaderBytes": 8192,
                     "xmux": {
                         "maxConcurrency": "16-32",
                         "cMaxReuseTimes": 0,
@@ -477,8 +454,8 @@ EOF
     "dns": {
         "servers": [
             "localhost",
-            "1.1.1.1",
-            "8.8.8.8"
+            "https+local://1.1.1.1/dns-query",
+            "https+local://8.8.8.8/dns-query"
         ]
     },
     "geodata": {

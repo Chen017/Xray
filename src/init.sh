@@ -120,5 +120,43 @@ if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
     unset _current_ds
 fi
 
+# ─── Configuration Auto-Optimization (v2.2.5) ─────────────────────────
+# Automatically applies evaluation report optimizations to existing configs
+if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
+    _current_dns=$(jq -c '.dns.servers // empty' "$is_config_json" 2>/dev/null)
+    if [[ "$_current_dns" == '["localhost","1.1.1.1","8.8.8.8"]' ]]; then
+        jq '.dns.servers = ["localhost","https+local://1.1.1.1/dns-query","https+local://8.8.8.8/dns-query"]' "$is_config_json" > "${is_config_json}.tmp" && \
+        mv -f "${is_config_json}.tmp" "$is_config_json" 2>/dev/null
+    fi
+    unset _current_dns
+fi
+
+if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then
+    for conf in "$is_conf_dir"/*.json; do
+        [[ -f "$conf" && "$conf" != *"custom_rules.json" ]] || continue
+        if grep -q "limitFallbackUpload\|tcpCongestion\|serverMaxHeaderBytes" "$conf" 2>/dev/null || grep -q '"noGRPCHeader": false' "$conf" 2>/dev/null || grep -q '""' "$conf" 2>/dev/null; then
+            _temp_conf=$(mktemp)
+            if jq '
+                del(.inbounds[].streamSettings.realitySettings.limitFallbackUpload, .inbounds[].streamSettings.realitySettings.limitFallbackDownload, .inbounds[].streamSettings.sockopt.tcpCongestion) |
+                (
+                    .inbounds[]? | select(.streamSettings.network == "xhttp") | .streamSettings.xhttpSettings
+                ) |= (
+                    .noGRPCHeader = true |
+                    .noSSEHeader = true |
+                    del(.serverMaxHeaderBytes)
+                ) |
+                (
+                    .inbounds[]? | select(.streamSettings.security == "reality") | .streamSettings.realitySettings.shortIds
+                ) |= map(select(. != ""))
+            ' "$conf" > "$_temp_conf" 2>/dev/null; then
+                if [[ -s "$_temp_conf" ]]; then
+                    mv -f "$_temp_conf" "$conf"
+                fi
+            fi
+            rm -f "$_temp_conf"
+        fi
+    done
+fi
+
 load core.sh
 is_main_menu
