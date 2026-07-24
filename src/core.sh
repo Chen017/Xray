@@ -420,12 +420,13 @@ create() {
 EOF
 )
         # del old file
-        [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
+        [[ -n "$is_config_file" ]] && is_no_del_msg=1 && del "$is_config_file"
         
         # save json to file
-        cat <<<$is_new_json >$is_json_file
+        cat <<<"$is_new_json" >"$is_json_file"
+        chmod 600 "$is_json_file"
         
-        if [[ $is_new_install ]]; then
+        if [[ -n "$is_new_install" ]]; then
             echo
             _ok "VLESS-REALITY 节点基础配置生成完毕"
             _kv "监听端口:" "$port"
@@ -444,7 +445,7 @@ EOF
         fi
         ;;
     config.json)
-        cat <<EOF >$is_config_json
+        cat <<EOF >"$is_config_json"
 {
     "log": {
         "access": "$is_log_dir/access.log",
@@ -521,6 +522,7 @@ EOF
     }
 }
 EOF
+        chmod 644 "$is_config_json"
         # inject custom rules into config.json if they exist
         apply_custom_rules
         manage restart &
@@ -643,7 +645,7 @@ apply_custom_rules() {
     ' $is_config_json)
     
     if [[ $? -eq 0 && -n "$tmp_json" ]]; then
-        echo "$tmp_json" > $is_config_json
+        echo "$tmp_json" > "$is_config_json"
     else
         _fail "注入自定义规则失败"
     fi
@@ -664,20 +666,22 @@ manage_custom_rules() {
         if [[ $count -gt 0 && "$count" != "null" ]]; then
             echo -e "  ${cyan}当前自定义规则 ($count 条):${none}"
             echo
-            local i=0
-            while [[ $i -lt $count ]]; do
-                local field=$(echo "$rules_json" | jq -r ".[$i] | if .domain then \"domain\" elif .ip then \"ip\" else \"unknown\" end")
-                local value=""
-                if [[ "$field" == "domain" ]]; then
-                    value=$(echo "$rules_json" | jq -r ".[$i].domain[0]")
-                elif [[ "$field" == "ip" ]]; then
-                    value=$(echo "$rules_json" | jq -r ".[$i].ip[0]")
-                fi
-                local tag=$(echo "$rules_json" | jq -r ".[$i].outboundTag")
+            local rules_list=$(echo "$rules_json" | jq -r '
+                if type == "array" then
+                    to_entries | .[] | 
+                    (if .value.domain then "domain," + .value.domain[0] 
+                     elif .value.ip then "ip," + .value.ip[0] 
+                     else "unknown," end) + "," + .value.outboundTag
+                else empty end
+            ')
+
+            local i=1
+            while IFS=',' read -r field value tag; do
+                [[ -z "$field" ]] && continue
                 local display=$(rule_to_display "$field" "$value" "$tag")
-                printf "  ${green}%2s)${none} %s\n" "$((i+1))" "$display"
+                printf "  ${green}%2s)${none} %s\n" "$i" "$display"
                 ((i++))
-            done
+            done <<< "$rules_list"
         else
             echo -e "  ${gray}暂无自定义规则${none}"
         fi
@@ -1916,9 +1920,9 @@ is_main_menu() {
         clear
 
         # ── header ──
-        _line
-        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
-        _line
+        _box_top
+        echo -e "  ${cyan}${c_vert}${none}  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
+        _box_mid
 
         # ── config overview ──
         if [[ $_ov_port ]]; then
@@ -1930,16 +1934,16 @@ is_main_menu() {
             local v6o_color="${gray}关闭${none}"
             [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
-            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
-            echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
-            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
-            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
-            echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
-            echo -e "  ${gray}暂无配置${none}"
+            echo -e "  ${cyan}${c_vert}${none}  ${gray}暂无配置${none}"
         fi
-        _line
+        _box_bot
 
         # ── menu items ──
         _section "节点管理"

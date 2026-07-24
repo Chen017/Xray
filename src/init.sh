@@ -26,26 +26,78 @@ _bold() { echo -e "${bold}$@${none}"; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
 # ─── formatted output helpers ─────────────────────────────
+# Box drawing characters
+c_top_l="┌"
+c_top_r="┐"
+c_bot_l="└"
+c_bot_r="┘"
+c_mid_l="├"
+c_mid_r="┤"
+c_horiz="─"
+c_vert="│"
+
+_box_top() { echo -e "${cyan}${c_top_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_top_r}${none}"; }
+_box_bot() { echo -e "${cyan}${c_bot_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_bot_r}${none}"; }
+_box_mid() { echo -e "${cyan}${c_mid_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_mid_r}${none}"; }
+
 _line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
-_section() { echo -e "${cyan} ── $@ ──${none}"; }
+_section() { echo -e "\n${cyan} ── $@ ──${none}\n"; }
 _menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
 _kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
-_ok() { echo -e "  ${green}[✓]${none} $@"; }
-_fail() { echo -e "  ${red}[✗]${none} $@"; }
-_info() { echo -e "  ${cyan}[i]${none} $@"; }
+
+# Status Badges
+b_ok="${green}[OK]${none}"
+b_warn="${yellow}[WARN]${none}"
+b_err="${red}[ERROR]${none}"
+b_info="${cyan}[INFO]${none}"
+
+_ok() { echo -e "  ${b_ok} $@"; }
+_fail() { echo -e "  ${b_err} $@"; }
+_info() { echo -e "  ${b_info} $@"; }
 _step() { echo -e "  ${blue}>>>${none} $@"; }
 
-is_err="${red}[错误]${none}"
-is_warn="${yellow}[警告]${none}"
+is_err="${b_err}"
+is_warn="${b_warn}"
 
 err() {
-    echo -e "\n  ${red}[错误]${none} $@\n"
+    echo -e "\n  ${b_err} $@\n"
     [[ $is_dont_auto_exit ]] && return
     exit 1
 }
 
 warn() {
-    echo -e "\n  ${yellow}[警告]${none} $@\n"
+    echo -e "\n  ${b_warn} $@\n"
+}
+
+# ─── Standard Prompts ─────────────────────────────────────
+# prompt_confirm: Prompts user for Y/n confirmation. Returns 0 for Y, 1 for N.
+prompt_confirm() {
+    local prompt_msg="$1"
+    local default="${2:-y}"
+    local reply
+    if [[ "$default" == "y" ]]; then
+        echo -ne "  ${blue}?${none} ${prompt_msg} [Y/n]: "
+    else
+        echo -ne "  ${blue}?${none} ${prompt_msg} [y/N]: "
+    fi
+    read -r reply
+    reply=${reply:-$default}
+    [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]]
+}
+
+# prompt_input: Prompts for a string input with an optional default.
+prompt_input() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    local default_val="$3"
+    if [[ -n "$default_val" ]]; then
+        echo -ne "  ${blue}?${none} ${prompt_msg} [${cyan}${default_val}${none}]: "
+    else
+        echo -ne "  ${blue}?${none} ${prompt_msg}: "
+    fi
+    local reply
+    read -r reply
+    eval "$var_name=\"\${reply:-\$default_val}\""
 }
 
 # pause
@@ -94,6 +146,26 @@ is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
 is_pkg="wget curl unzip jq"
+
+check_dependencies() {
+    local missing_pkgs=""
+    for pkg in $is_pkg; do
+        if ! command -v "$pkg" &>/dev/null; then
+            missing_pkgs="$missing_pkgs $pkg"
+        fi
+    done
+    if [[ -n "$missing_pkgs" ]]; then
+        _info "正在安装缺失的依赖:$missing_pkgs ..."
+        $cmd update -y &>/dev/null || true
+        $cmd install -y $missing_pkgs &>/dev/null || true
+        for pkg in $is_pkg; do
+            if ! command -v "$pkg" &>/dev/null; then
+                err "依赖安装失败: $pkg, 请手动安装后再运行。"
+            fi
+        done
+    fi
+}
+check_dependencies
 is_config_json=$is_core_dir/config.json
 
 # core ver
