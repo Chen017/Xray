@@ -1920,9 +1920,9 @@ is_main_menu() {
         clear
 
         # ── header ──
-        _box_top
-        echo -e "  ${cyan}${c_vert}${none}  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
-        _box_mid
+        _line
+        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${gray}|${none}  ${gray}Script ${is_sh_ver}${none}  ${gray}|${none}  ${is_core_status}"
+        _line
 
         # ── config overview ──
         if [[ $_ov_port ]]; then
@@ -1934,16 +1934,16 @@ is_main_menu() {
             local v6o_color="${gray}关闭${none}"
             [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}${c_vert}${none}  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
+            echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
+            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
+            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
+            echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
+            echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
-            echo -e "  ${cyan}${c_vert}${none}  ${gray}暂无配置${none}"
+            echo -e "  ${gray}暂无配置${none}"
         fi
-        _box_bot
+        _line
 
         # ── menu items ──
         _section "节点管理"

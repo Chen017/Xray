@@ -26,21 +26,7 @@ _bold() { echo -e "${bold}$@${none}"; }
 _red_bg() { echo -e "\e[41m$@${none}"; }
 
 # ─── formatted output helpers ─────────────────────────────
-# Box drawing characters
-c_top_l="┌"
-c_top_r="┐"
-c_bot_l="└"
-c_bot_r="┘"
-c_mid_l="├"
-c_mid_r="┤"
-c_horiz="─"
-c_vert="│"
-
-_box_top() { echo -e "${cyan}${c_top_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_top_r}${none}"; }
-_box_bot() { echo -e "${cyan}${c_bot_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_bot_r}${none}"; }
-_box_mid() { echo -e "${cyan}${c_mid_l}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_horiz}${c_mid_r}${none}"; }
-
-_line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
+_line() { echo -e "${gray}--------------------------------------------------${none}"; }
 _section() { echo -e "\n${cyan} ── $@ ──${none}\n"; }
 _menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
 _kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
