@@ -1292,10 +1292,10 @@ info() {
     get addr
     is_color=41
 
-    # get active shortId (first non-empty or empty)
-    is_v4_sid=$(jq -r '.[1] // ""' <<<$v4_short_ids)
+    # get active shortId (v4 uses [0], v6 uses [1] to ensure different SIDs in split mode)
+    is_v4_sid=$(jq -r '.[0] // ""' <<<$v4_short_ids)
     [[ "$is_v4_sid" == "null" ]] && is_v4_sid=""
-    is_v6_sid=$(jq -r '.[1] // ""' <<<$v6_short_ids)
+    is_v6_sid=$(jq -r '.[1] // .[0] // ""' <<<$v6_short_ids)
     [[ "$is_v6_sid" == "null" ]] && is_v6_sid=""
     
     v4_url="$is_protocol://$uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v4_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v4_sid}#233boy-v4-$is_addr"
