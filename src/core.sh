@@ -1952,18 +1952,15 @@ is_main_menu() {
         _line
 
         # ── menu items ──
-        echo
         _section "节点管理"
         _menu 1 "更改配置"
         _menu 2 "查看客户端配置"
         _menu 3 "查看完整服务端配置"
 
-        echo
         _section "运行控制"
         _menu 4 "启动 / 停止 / 重启"
         _menu 5 "查看运行状态"
 
-        echo
         _section "杂项"
         _menu 6 "杂项管理 (包含日志/更新等)"
 
