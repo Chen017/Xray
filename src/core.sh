@@ -1782,9 +1782,13 @@ _get_overview() {
     # log & outbound strategy
     if [[ -f $is_config_json ]]; then
         _ov_log_level=$(jq -r '.log.loglevel // "unknown"' $is_config_json 2>/dev/null)
-        _ov_outbound_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' $is_config_json 2>/dev/null)
-        [[ "$_ov_outbound_strategy" == "UseIPv4v6" ]] && _ov_outbound_pref="双栈优选"
-        [[ "$_ov_outbound_strategy" == "UseIPv6v4" ]] && _ov_outbound_pref="v6优先"
+        _ov_outbound_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' "$is_config_json" 2>/dev/null)
+        _ov_outbound_pref="未知"
+        case "$_ov_outbound_strategy" in
+            UseIPv4) _ov_outbound_pref="v4优先" ;;
+            UseIPv6|UseIPv6v4) _ov_outbound_pref="v6优先" ;;
+            UseIPv4v6) _ov_outbound_pref="双栈优选" ;;
+        esac
     fi
 
     # firewall ports
@@ -1864,18 +1868,20 @@ misc_menu() {
             ;;
         4)
             echo
-            if [[ "$_ov_outbound_strategy" == "UseIPv4v6" ]]; then
-                ask list is_do_switch "确认切换" "\n  当前为 双栈优选 (UseIPv4v6)。是否切换为优先使用 IPv6 回国?"
-                [[ $REPLY == "0" ]] && continue
-                sed -i 's/"domainStrategy": "UseIPv4v6"/"domainStrategy": "UseIPv6v4"/g' $is_config_json
-                _ok "已切换出站 IP 优先为: v6优先 (UseIPv6v4)"
-            else
-                ask list is_do_switch "确认切换" "\n  当前为 v6 优先 (UseIPv6v4)。是否切换为 双栈优选 (UseIPv4v6) 回国?"
-                [[ $REPLY == "0" ]] && continue
-                sed -i 's/"domainStrategy": "UseIPv6v4"/"domainStrategy": "UseIPv4v6"/g' $is_config_json
-                _ok "已切换出站 IP 优先为: 双栈优选 (UseIPv4v6)"
-            fi
-            manage restart &
+            ask list ip_pref "v4优先(UseIPv4) v6优先(UseIPv6) 双栈优选(UseIPv4v6)" "\n  当前出站策略为: $_ov_outbound_pref ($_ov_outbound_strategy)\n  请选择新的出站 IP 优先策略:"
+            [[ $REPLY == "0" ]] && continue
+            local new_strategy="UseIPv4v6"
+            case $REPLY in
+            1) new_strategy="UseIPv4" ;;
+            2) new_strategy="UseIPv6" ;;
+            3) new_strategy="UseIPv4v6" ;;
+            esac
+            
+            # Use jq to safely update only the direct outbound's domainStrategy
+            jq '(.outbounds[] | select(.tag=="direct") | .settings.domainStrategy) = "'$new_strategy'"' "$is_config_json" > "${is_config_json}.tmp" && mv -f "${is_config_json}.tmp" "$is_config_json"
+            
+            _ok "已切换出站 IP 优先为: $new_strategy"
+            manage restart
             sleep 1
             ;;
         5)
