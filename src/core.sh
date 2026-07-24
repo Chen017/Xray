@@ -1946,6 +1946,7 @@ is_main_menu() {
         _line
 
         # ── menu items ──
+        echo
         _section "节点管理"
         _menu 1 "更改配置"
         _menu 2 "查看客户端配置"
