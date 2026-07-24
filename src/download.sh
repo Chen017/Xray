@@ -9,9 +9,10 @@ get_latest_version() {
         url="https://api.github.com/repos/$is_sh_repo/releases/latest?v=$RANDOM"
         ;;
     esac
-    latest_ver=$(_wget -qO- $url | grep tag_name | grep -E -o 'v([0-9.]+)')
+    local raw_response=$(_wget -qO- $url)
+    latest_ver=$(echo "$raw_response" | grep tag_name | grep -E -o 'v([0-9.]+)')
     [[ ! $latest_ver ]] && {
-        err "获取 ${name} 最新版本失败."
+        err "获取 ${name} 最新版本失败.\n[调试信息] URL: $url \n返回内容: ${raw_response:-未获取到任何内容或网络超时}"
     }
     unset name url
 }
