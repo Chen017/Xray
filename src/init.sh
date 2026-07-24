@@ -27,7 +27,7 @@ _red_bg() { echo -e "\e[41m$@${none}"; }
 
 # ─── formatted output helpers ─────────────────────────────
 _line() { echo -e "${gray}--------------------------------------------------${none}"; }
-_section() { echo -e "\n${cyan} ── $@ ──${none}\n"; }
+_section() { echo -e "${cyan} ── $@ ──${none}"; }
 _menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
 _kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
 
