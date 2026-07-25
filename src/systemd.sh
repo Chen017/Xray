@@ -18,6 +18,7 @@ LimitNPROC=10000
 LimitNOFILE=1048576
 PrivateTmp=true
 ProtectSystem=full
+ReadWritePaths=$is_core_dir
 #CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 #AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 

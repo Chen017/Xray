@@ -189,6 +189,13 @@ if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
     unset _current_dns
 fi
 
+# ─── Systemd Service Hotfix for Geodata Update ───────────
+if [[ -f /lib/systemd/system/xray.service ]] && grep -q "ProtectSystem=full" /lib/systemd/system/xray.service && ! grep -q "ReadWritePaths=" /lib/systemd/system/xray.service; then
+    sed -i '/ProtectSystem=full/a ReadWritePaths=/usr/local/etc/xray' /lib/systemd/system/xray.service
+    systemctl daemon-reload
+    systemctl restart xray 2>/dev/null
+fi
+
 if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then
     for conf in "$is_conf_dir"/*.json; do
         [[ -f "$conf" && "$conf" != *"custom_rules.json" ]] || continue
