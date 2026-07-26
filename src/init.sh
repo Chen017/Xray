@@ -190,10 +190,21 @@ if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
 fi
 
 # ─── Systemd Service Hotfix for Geodata Update ───────────
-if [[ -f /lib/systemd/system/xray.service ]] && grep -q "ProtectSystem=full" /lib/systemd/system/xray.service && ! grep -q "ReadWritePaths=" /lib/systemd/system/xray.service; then
-    sed -i '/ProtectSystem=full/a ReadWritePaths=/usr/local/etc/xray' /lib/systemd/system/xray.service
-    systemctl daemon-reload
-    systemctl restart xray 2>/dev/null
+if [[ -f /lib/systemd/system/xray.service ]]; then
+    _patched=0
+    if grep -q "ProtectSystem=full" /lib/systemd/system/xray.service && ! grep -q "ReadWritePaths=" /lib/systemd/system/xray.service; then
+        sed -i '/ProtectSystem=full/a ReadWritePaths=/usr/local/etc/xray' /lib/systemd/system/xray.service
+        _patched=1
+    fi
+    if ! grep -q "XRAY_LOCATION_ASSET" /lib/systemd/system/xray.service; then
+        sed -i '/ExecStart=/i Environment="XRAY_LOCATION_ASSET=/usr/local/etc/xray/bin"' /lib/systemd/system/xray.service
+        _patched=1
+    fi
+    if [[ $_patched -eq 1 ]]; then
+        systemctl daemon-reload
+        systemctl restart xray 2>/dev/null
+    fi
+    unset _patched
 fi
 
 if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then

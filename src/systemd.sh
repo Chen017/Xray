@@ -11,6 +11,7 @@ After=network.target nss-lookup.target
 #User=nobody
 User=root
 NoNewPrivileges=true
+Environment="XRAY_LOCATION_ASSET=$is_core_dir/bin"
 ExecStart=$is_core_bin run -config $is_config_json -confdir $is_conf_dir
 Restart=on-failure
 RestartPreventExitStatus=23
