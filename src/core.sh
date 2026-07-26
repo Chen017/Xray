@@ -459,20 +459,7 @@ EOF
             "https+local://8.8.8.8/dns-query"
         ]
     },
-    "geodata": {
-        "cron": "0 4 * * *",
-        "outbound": "direct",
-        "assets": [
-            {
-                "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
-                "file": "geoip.dat"
-            },
-            {
-                "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
-                "file": "geosite.dat"
-            }
-        ]
-    },
+
     "outbounds": [
         {
             "protocol": "freedom",

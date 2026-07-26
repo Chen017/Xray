@@ -11,7 +11,6 @@ After=network.target nss-lookup.target
 #User=nobody
 User=root
 NoNewPrivileges=true
-Environment="XRAY_LOCATION_ASSET=$is_core_dir/bin"
 ExecStart=$is_core_bin run -config $is_config_json -confdir $is_conf_dir
 Restart=on-failure
 RestartPreventExitStatus=23
@@ -19,7 +18,6 @@ LimitNPROC=10000
 LimitNOFILE=1048576
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=$is_core_dir
 #CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 #AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
