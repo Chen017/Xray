@@ -1597,7 +1597,7 @@ update() {
     download $is_update_name $is_new_ver
     _ok "$is_show_name 更新成功: $(_green $is_new_ver)"
     [[ $is_update_name == 'core' ]] && {
-        manage restart &
+        manage restart
         is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
         _ok "$is_core_name 已重启"
     }
@@ -1818,7 +1818,7 @@ misc_menu() {
         clear
         echo
         _line
-        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${dim}/${none}  ${gray}Script ${is_sh_ver}${none}  ${dim}│${none}  ${is_core_status}"
+        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${gray}|${none}  ${gray}Script ${is_sh_ver}${none}  ${gray}|${none}  ${is_core_status}"
         _line
         
         _section "杂项管理"
@@ -1828,11 +1828,10 @@ misc_menu() {
         _menu 4 "切换出站 IP 优先 (IPv4 / IPv6)"
         _menu 5 "端口管理 (放行/关闭)"
         _menu 6 "更新"
-        _menu 7 "更新 GeoIP/GeoSite 规则"
-        _menu 8 "卸载"
+        _menu 7 "卸载"
         
         echo
-        echo -ne "  请选择 [${green}1-8${none}] [${red}0 返回主菜单${none}]: "
+        echo -ne "  请选择 [${green}1-7${none}] [${red}0 返回主菜单${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && return
         
@@ -1851,7 +1850,7 @@ misc_menu() {
             [[ $REPLY == "0" ]] && continue
             sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
             _ok "日志等级已修改为: $is_log_level"
-            manage restart &
+            manage restart
             sleep 1
             ;;
         4)
@@ -1900,38 +1899,6 @@ misc_menu() {
             pause
             ;;
         7)
-            echo
-            _step "正在更新 GeoIP/GeoSite 规则文件..."
-            echo
-            local geo_dir="$is_core_dir/bin"
-            mkdir -p "$geo_dir"
-            local geo_ok=1
-            if curl -sL -o "${geo_dir}/geoip.dat.tmp" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"; then
-                mv -f "${geo_dir}/geoip.dat.tmp" "${geo_dir}/geoip.dat"
-                _ok "geoip.dat 更新成功"
-            else
-                rm -f "${geo_dir}/geoip.dat.tmp"
-                _fail "geoip.dat 下载失败"
-                geo_ok=0
-            fi
-            if curl -sL -o "${geo_dir}/geosite.dat.tmp" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"; then
-                mv -f "${geo_dir}/geosite.dat.tmp" "${geo_dir}/geosite.dat"
-                _ok "geosite.dat 更新成功"
-            else
-                rm -f "${geo_dir}/geosite.dat.tmp"
-                _fail "geosite.dat 下载失败"
-                geo_ok=0
-            fi
-            # 重新覆盖并设置定时更新任务
-            setup_geodata_cron
-            _ok "定时更新任务已重新设置 (每天 04:00)"
-            if [[ $geo_ok == 1 ]] && [[ ! $is_core_stop ]]; then
-                manage restart
-                _ok "Xray 已重启"
-            fi
-            pause
-            ;;
-        8)
             uninstall
             exit 0
             ;;
