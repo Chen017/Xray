@@ -152,24 +152,38 @@ check_dependencies() {
     fi
 }
 
-# ─── auto install geodata cronjob ─────────────────────────
-cat << 'EOF' > /usr/local/etc/xray/sh/update_geodata.sh
-#!/bin/bash
-TARGET_DIR="/usr/local/etc/xray/bin"
-mkdir -p $TARGET_DIR
-
-curl -sL -o "${TARGET_DIR}/geoip.dat" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
-curl -sL -o "${TARGET_DIR}/geosite.dat" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
-
-systemctl restart xray
-EOF
-chmod +x /usr/local/etc/xray/sh/update_geodata.sh
-if ! crontab -l 2>/dev/null | grep -q "update_geodata.sh"; then
-    (crontab -l 2>/dev/null; echo "0 4 * * * /usr/local/etc/xray/sh/update_geodata.sh >/var/log/xray/geodata_update.log 2>&1") | crontab -
-fi
-
 check_dependencies
 is_config_json=$is_core_dir/config.json
+
+# ─── auto install geodata cronjob ─────────────────────────
+setup_geodata_cron() {
+    [[ ! -d "$is_sh_dir" ]] && return
+    cat << 'GEODATA_EOF' > "$is_sh_dir/update_geodata.sh"
+#!/bin/bash
+TARGET_DIR="/usr/local/etc/xray/bin"
+LOG_DIR="/var/log/xray"
+mkdir -p "$TARGET_DIR" "$LOG_DIR"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始更新 GeoIP/GeoSite ..."
+
+if curl -sL -o "${TARGET_DIR}/geoip.dat.tmp" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" && \
+   curl -sL -o "${TARGET_DIR}/geosite.dat.tmp" "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"; then
+    mv -f "${TARGET_DIR}/geoip.dat.tmp" "${TARGET_DIR}/geoip.dat"
+    mv -f "${TARGET_DIR}/geosite.dat.tmp" "${TARGET_DIR}/geosite.dat"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 更新成功, 正在重启 Xray ..."
+    systemctl restart xray
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 重启完成"
+else
+    rm -f "${TARGET_DIR}/geoip.dat.tmp" "${TARGET_DIR}/geosite.dat.tmp"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 下载失败, 保留旧文件"
+fi
+GEODATA_EOF
+    chmod +x "$is_sh_dir/update_geodata.sh"
+    if ! crontab -l 2>/dev/null | grep -q "update_geodata.sh"; then
+        (crontab -l 2>/dev/null; echo "0 4 * * * $is_sh_dir/update_geodata.sh >>/var/log/xray/geodata_update.log 2>&1") | crontab -
+    fi
+}
+setup_geodata_cron
 
 # core ver
 is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
