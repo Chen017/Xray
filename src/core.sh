@@ -479,13 +479,6 @@ EOF
             {
                 "type": "field",
                 "domain": [
-                    "geosite:google"
-                ],
-                "outboundTag": "direct"
-            },
-            {
-                "type": "field",
-                "domain": [
                     "geosite:cn"
                 ],
                 "outboundTag": "block"
@@ -613,15 +606,14 @@ rule_to_display() {
     echo "$display_type,$value → $action"
 }
 
-# apply custom rules into config.json (insert after geosite:google, before geosite:cn)
+# apply custom rules into config.json (before base block rules)
 apply_custom_rules() {
     [[ ! -f $is_config_json ]] && return
     local rules_json=$(load_custom_rules)
     
-    # Rebuild routing.rules idempotently with base rules + custom rules
+    # Rebuild routing.rules idempotently with custom rules + base block rules
     local tmp_json=$(jq --argjson custom "$rules_json" '
         .routing.rules = (
-            [{"type": "field", "domain": ["geosite:google"], "outboundTag": "direct"}] +
             (if ($custom | type) == "array" then $custom else [] end) +
             [
                 {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},

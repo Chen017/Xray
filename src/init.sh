@@ -259,6 +259,15 @@ if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
     unset _current_ds
 fi
 
+# ─── Remove geosite:google direct rule migration ────────
+# Auto-remove the legacy geosite:google direct rule from existing configs
+if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
+    if jq -e '.routing.rules[]? | select(.domain[]? == "geosite:google")' "$is_config_json" &>/dev/null; then
+        jq 'del(.routing.rules[] | select(.domain[]? == "geosite:google"))' "$is_config_json" > "${is_config_json}.tmp" && \
+        mv -f "${is_config_json}.tmp" "$is_config_json" 2>/dev/null
+    fi
+fi
+
 # ─── Configuration Auto-Optimization (v2.2.5) ─────────────────────────
 # Automatically applies evaluation report optimizations to existing configs
 if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
