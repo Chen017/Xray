@@ -251,7 +251,7 @@ ask() {
                 _info "请输入 (y)"
                 continue
             }
-            [[ $REPLY ]] && export $is_ask_set=$REPLY && _ok "使用: ${!is_ask_set}" && break
+            [[ $REPLY ]] && export "$is_ask_set=$REPLY" && _ok "使用: ${!is_ask_set}" && break
         else
             [[ $(is_test number "$REPLY") ]] && is_ask_result=${is_tmp_list[$REPLY - 1]}
             [[ $is_ask_result ]] && export $is_ask_set="$is_ask_result" && _ok "选择: ${!is_ask_set}" && break
