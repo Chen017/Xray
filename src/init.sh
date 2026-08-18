@@ -153,7 +153,8 @@ check_dependencies() {
 }
 
 # ─── auto install geodata cronjob ─────────────────────────
-cat << 'EOF' > /usr/local/etc/xray/sh/update_geodata.sh
+if [[ ! -f /usr/local/etc/xray/sh/update_geodata.sh ]]; then
+    cat << 'EOF' > /usr/local/etc/xray/sh/update_geodata.sh
 #!/bin/bash
 TARGET_DIR="/usr/local/etc/xray/bin"
 mkdir -p $TARGET_DIR
@@ -163,9 +164,69 @@ curl -sL -o "${TARGET_DIR}/geosite.dat" "https://github.com/Loyalsoldier/v2ray-r
 
 systemctl restart xray
 EOF
-chmod +x /usr/local/etc/xray/sh/update_geodata.sh
-if ! crontab -l 2>/dev/null | grep -q "update_geodata.sh"; then
-    (crontab -l 2>/dev/null; echo "0 4 * * * /usr/local/etc/xray/sh/update_geodata.sh >/var/log/xray/geodata_update.log 2>&1") | crontab -
+    chmod +x /usr/local/etc/xray/sh/update_geodata.sh
+fi
+# ensure crontab is available, install cron if missing
+if ! command -v crontab &>/dev/null; then
+    if [[ $cmd =~ apt ]]; then
+        $cmd install -y cron &>/dev/null && systemctl enable --now cron &>/dev/null
+    else
+        $cmd install -y cronie &>/dev/null && systemctl enable --now crond &>/dev/null
+    fi
+fi
+if command -v crontab &>/dev/null; then
+    if ! crontab -l 2>/dev/null | grep -q "update_geodata.sh"; then
+        (crontab -l 2>/dev/null; echo "0 4 * * * /usr/local/etc/xray/sh/update_geodata.sh >/var/log/xray/geodata_update.log 2>&1") | crontab -
+    fi
+fi
+
+# ─── auto install iptables firewall ──────────────────────
+if ! command -v iptables &>/dev/null; then
+    if [[ $cmd =~ apt ]]; then
+        DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
+    else
+        $cmd install -y iptables iptables-services &>/dev/null
+        systemctl enable --now iptables &>/dev/null
+        systemctl enable --now ip6tables &>/dev/null
+    fi
+    if command -v iptables &>/dev/null; then
+        # ── IPv4 baseline rules ──
+        iptables -F INPUT
+        iptables -A INPUT -i lo -j ACCEPT
+        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        iptables -A INPUT -p icmp -j ACCEPT
+        iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+        iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+        iptables -A INPUT -p udp --dport 443 -j ACCEPT
+        iptables -A INPUT -p tcp --dport 8443 -j ACCEPT
+        iptables -A INPUT -p udp --dport 8443 -j ACCEPT
+        iptables -P INPUT DROP
+
+        # ── IPv6 baseline rules ──
+        if command -v ip6tables &>/dev/null; then
+            ip6tables -F INPUT
+            ip6tables -A INPUT -i lo -j ACCEPT
+            ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+            ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+            ip6tables -A INPUT -p udp --dport 443 -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 8443 -j ACCEPT
+            ip6tables -A INPUT -p udp --dport 8443 -j ACCEPT
+            ip6tables -P INPUT DROP
+        fi
+
+        # ── persist rules ──
+        if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
+            iptables-save > /etc/iptables/rules.v4
+            [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
+        elif [[ $(type -P netfilter-persistent) ]]; then
+            netfilter-persistent save &>/dev/null
+        elif [[ $(type -P service) ]]; then
+            service iptables save &>/dev/null 2>&1
+            service ip6tables save &>/dev/null 2>&1
+        fi
+    fi
 fi
 
 check_dependencies
