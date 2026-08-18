@@ -180,14 +180,16 @@ if command -v crontab &>/dev/null; then
     fi
 fi
 
-# ─── auto install iptables firewall ──────────────────────
-if ! command -v iptables &>/dev/null; then
-    if [[ $cmd =~ apt ]]; then
-        DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
-    else
-        $cmd install -y iptables iptables-services &>/dev/null
-        systemctl enable --now iptables &>/dev/null
-        systemctl enable --now ip6tables &>/dev/null
+# ─── auto setup iptables firewall (one-time) ─────────────
+if [[ ! -f $is_core_dir/.fw_init_done ]]; then
+    if ! command -v iptables &>/dev/null; then
+        if [[ $cmd =~ apt ]]; then
+            DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
+        else
+            $cmd install -y iptables iptables-services &>/dev/null
+            systemctl enable --now iptables &>/dev/null
+            systemctl enable --now ip6tables &>/dev/null
+        fi
     fi
     if command -v iptables &>/dev/null; then
         # ── IPv4 baseline rules ──
@@ -226,6 +228,7 @@ if ! command -v iptables &>/dev/null; then
             service iptables save &>/dev/null 2>&1
             service ip6tables save &>/dev/null 2>&1
         fi
+        > $is_core_dir/.fw_init_done
     fi
 fi
 

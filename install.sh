@@ -29,6 +29,7 @@ _ok() { echo -e "  ${green}[✓]${none} $@"; }
 _fail() { echo -e "  ${red}[✗]${none} $@"; }
 _info() { echo -e "  ${cyan}[i]${none} $@"; }
 _step() { echo -e "  ${blue}>>>${none} $@"; }
+_kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
 
 is_err="${red}[错误]${none}"
 is_warn="${yellow}[警告]${none}"
@@ -430,6 +431,58 @@ main() {
     load systemd.sh
     is_new_install=1
     install_service $is_core &>/dev/null
+
+    # ─── setup baseline firewall ──────────────────────────────
+    _ok "正在配置基础防火墙规则..."
+    if ! command -v iptables &>/dev/null; then
+        if [[ $cmd =~ apt ]]; then
+            DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
+        else
+            $cmd install -y iptables iptables-services &>/dev/null
+            systemctl enable --now iptables &>/dev/null
+            systemctl enable --now ip6tables &>/dev/null
+        fi
+    fi
+    if command -v iptables &>/dev/null; then
+        # ── IPv4 baseline rules ──
+        iptables -F INPUT
+        iptables -A INPUT -i lo -j ACCEPT
+        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        iptables -A INPUT -p icmp -j ACCEPT
+        iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+        iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+        iptables -A INPUT -p udp --dport 443 -j ACCEPT
+        iptables -A INPUT -p tcp --dport 8443 -j ACCEPT
+        iptables -A INPUT -p udp --dport 8443 -j ACCEPT
+        iptables -P INPUT DROP
+
+        # ── IPv6 baseline rules ──
+        if command -v ip6tables &>/dev/null; then
+            ip6tables -F INPUT
+            ip6tables -A INPUT -i lo -j ACCEPT
+            ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+            ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+            ip6tables -A INPUT -p udp --dport 443 -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport 8443 -j ACCEPT
+            ip6tables -A INPUT -p udp --dport 8443 -j ACCEPT
+            ip6tables -P INPUT DROP
+        fi
+
+        # ── persist rules ──
+        if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
+            iptables-save > /etc/iptables/rules.v4
+            [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
+        elif [[ $(type -P netfilter-persistent) ]]; then
+            netfilter-persistent save &>/dev/null
+        elif [[ $(type -P service) ]]; then
+            service iptables save &>/dev/null 2>&1
+            service ip6tables save &>/dev/null 2>&1
+        fi
+        > $is_core_dir/.fw_init_done
+        _ok "防火墙已配置: SSH(22) + Xray(443/8443) 放行, 其余入站拒绝"
+    fi
 
     # create condf dir
     mkdir -p $is_conf_dir
