@@ -455,8 +455,8 @@ EOF
     "dns": {
         "servers": [
             "localhost",
-            "https+local://1.1.1.1/dns-query",
-            "https+local://8.8.8.8/dns-query"
+            "1.1.1.1",
+            "8.8.8.8"
         ]
     },
 
@@ -1317,12 +1317,14 @@ info() {
         if [[ $REPLY == 1 ]]; then
             local vision_sni=$v4_sni
             local vision_sid=$is_v4_sid
+            local vision_ip=$is_addr
+            local vision_addr=$is_addr
         else
             local vision_sni=$v6_sni
             local vision_sid=$is_v6_sid
+            local vision_ip=$v6_ip
+            local vision_addr=$v6_ip
         fi
-        local vision_ip=$is_addr
-        local vision_addr=$is_addr
         [[ "$vision_addr" == *:* ]] && vision_addr="[$vision_addr]"
     elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
         # ask which SNI for single stack
@@ -1332,12 +1334,14 @@ info() {
         if [[ $REPLY == 1 ]]; then
             local single_sni=$v4_sni
             local single_sid=$is_v4_sid
+            local single_ip=$is_addr
+            local single_addr=$is_addr
         else
             local single_sni=$v6_sni
             local single_sid=$is_v6_sid
+            local single_ip=$v6_ip
+            local single_addr=$v6_ip
         fi
-        local single_ip=$is_addr
-        local single_addr=$is_addr
         [[ "$single_addr" == *:* ]] && single_addr="[$single_addr]"
     fi
 
