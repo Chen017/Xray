@@ -259,17 +259,6 @@ if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
     unset _current_ds
 fi
 
-# ─── Configuration Auto-Optimization (v2.2.5) ─────────────────────────
-# Automatically applies evaluation report optimizations to existing configs
-if [[ -f $is_config_json ]] && command -v jq &>/dev/null; then
-    _current_dns=$(jq -c '.dns.servers // empty' "$is_config_json" 2>/dev/null)
-    if [[ "$_current_dns" == '["localhost","1.1.1.1","8.8.8.8"]' ]]; then
-        jq '.dns.servers = ["localhost","https+local://1.1.1.1/dns-query","https+local://8.8.8.8/dns-query"]' "$is_config_json" > "${is_config_json}.tmp" && \
-        mv -f "${is_config_json}.tmp" "$is_config_json" 2>/dev/null
-    fi
-    unset _current_dns
-fi
-
 if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then
     for conf in "$is_conf_dir"/*.json; do
         [[ -f "$conf" && "$conf" != *"custom_rules.json" ]] || continue
