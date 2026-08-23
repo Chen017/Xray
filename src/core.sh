@@ -525,7 +525,7 @@ EOF
 }
 
 # ─── custom routing rules management ─────────────────────
-is_custom_rules_file=$is_conf_dir/custom_rules.json
+is_custom_rules_file=$is_core_dir/custom_rules.json
 
 load_custom_rules() {
     if [[ -f $is_custom_rules_file ]]; then
