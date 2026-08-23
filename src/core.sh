@@ -469,6 +469,20 @@ EOF
             }
         },
         {
+            "protocol": "freedom",
+            "tag": "direct-v4",
+            "settings": {
+                "domainStrategy": "UseIPv4"
+            }
+        },
+        {
+            "protocol": "freedom",
+            "tag": "direct-v6",
+            "settings": {
+                "domainStrategy": "UseIPv6"
+            }
+        },
+        {
             "protocol": "blackhole",
             "tag": "block"
         }
@@ -574,6 +588,8 @@ rule_to_display() {
     local tag="$3"
     local action="direct"
     [[ "$tag" == "block" ]] && action="block"
+    [[ "$tag" == "direct-v4" ]] && action="强制IPv4"
+    [[ "$tag" == "direct-v6" ]] && action="强制IPv6"
     
     local display_type=""
     case $field in
@@ -610,7 +626,18 @@ rule_to_display() {
 apply_custom_rules() {
     [[ ! -f $is_config_json ]] && return
     local rules_json=$(load_custom_rules)
-    
+
+    # Ensure direct-v4 and direct-v6 outbound entries exist (for existing installations)
+    local tmp_json=$(jq '
+        if (.outbounds | map(select(.tag == "direct-v4")) | length) == 0 then
+            .outbounds += [{"protocol": "freedom", "tag": "direct-v4", "settings": {"domainStrategy": "UseIPv4"}}]
+        else . end |
+        if (.outbounds | map(select(.tag == "direct-v6")) | length) == 0 then
+            .outbounds += [{"protocol": "freedom", "tag": "direct-v6", "settings": {"domainStrategy": "UseIPv6"}}]
+        else . end
+    ' $is_config_json)
+    [[ $? -eq 0 && -n "$tmp_json" ]] && echo "$tmp_json" > "$is_config_json"
+
     # Rebuild routing.rules idempotently with custom rules + base block rules
     local tmp_json=$(jq --argjson custom "$rules_json" '
         .routing.rules = (
@@ -622,7 +649,7 @@ apply_custom_rules() {
             ]
         )
     ' $is_config_json)
-    
+
     if [[ $? -eq 0 && -n "$tmp_json" ]]; then
         echo "$tmp_json" > "$is_config_json"
     else
@@ -706,10 +733,12 @@ manage_custom_rules() {
             
             # ask action
             echo
-            ask list is_rule_action "放行(direct) 阻止(block)" "\n  请选择动作:"
+            ask list is_rule_action "放行(direct) 强制IPv4(direct-v4) 强制IPv6(direct-v6) 阻止(block)" "\n  请选择动作:"
             [[ $REPLY == "0" ]] && continue
             local outbound_tag="direct"
-            [[ $REPLY == 2 ]] && outbound_tag="block"
+            [[ $REPLY == 2 ]] && outbound_tag="direct-v4"
+            [[ $REPLY == 3 ]] && outbound_tag="direct-v6"
+            [[ $REPLY == 4 ]] && outbound_tag="block"
             
             # build new rule json
             local new_rule=""
