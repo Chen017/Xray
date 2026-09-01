@@ -29,3 +29,14 @@ jobs:
         with:
           files: code.zip
           tag_name: ${{ env.is_sh_ver }}
+      - name: cleanup old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 获取所有 release 的 tag，按创建时间降序排列，跳过最新 3 个，删除其余
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+            | while read tag; do
+              echo "Deleting release and tag: $tag"
+              gh release delete "$tag" --yes --cleanup-tag
+            done
