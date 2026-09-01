@@ -24,7 +24,7 @@
 - 安全策略与分流：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
 - 配置交互：
   - 支持更改端口（仅支持 443/8443）、路径、UUID、密钥对、各栈 SNI 伪装域名与 ShortIds。
-  - 支持增加与删除自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct` 与阻止 `block`）。
+  - 支持增加与删除自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct`、强制 IPv4 `direct-v4`、强制 IPv6 `direct-v6` 与阻止 `block`）。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
   - 支持切换出站 IP 优先策略 (IPv4 / IPv6 / 双栈优选)，适配不同双栈或纯 IPv6 机器需求。
   - 支持选择 XHTTP 双栈分离或仅 Vision Reality 部署模式，输出对应的 Mihomo YAML 或 VLESS 分享链接。
