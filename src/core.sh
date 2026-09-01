@@ -9,9 +9,9 @@ change_list=(
     "更改 v6 目标域名 (SNI/Dest)"
     "重新生成 v4 Short IDs"
     "重新生成 v6 Short IDs"
-    "切换 v6only"
     "切换分离类型"
     "管理自定义分流规则"
+    "切换出站 IP 优先"
 )
 servername_list=(
     www.magicardshop.jp
@@ -20,6 +20,9 @@ servername_list=(
     hahuma.com
     dodoshort.com
 )
+
+# CDN / 云厂商黑名单 — 命中任何一个则认为域名挂了 CDN，不适合做 Reality dest
+CDN_BLACKLIST="Cloudflare|Fastly|Akamai|CloudFront|Amazon|Microsoft|Google|Azure|Incapsula|Imperva"
 
 msg() {
     echo -e "$@"
@@ -273,7 +276,7 @@ create() {
         
         [[ $is_test_json ]] && return # tmp test
         
-        [[ $v6_only == 'true' ]] && is_v6only_str=',"v6only": true' || is_v6only_str=''
+        is_v6only_str=''
 
         # generate config
         is_new_json=$(cat <<EOF
@@ -845,12 +848,21 @@ change() {
     # if is_dont_show_info exist, cant show info.
     is_dont_show_info=
     
-    # update change list dynamically for route mode
+    # update change list dynamically for route mode and outbound pref
     if [[ -f $is_conf_dir/is_v6_uplink ]]; then
-        change_list[9]="切换分离类型 (当前: v6上行/v4下行)"
+        change_list[8]="切换分离类型 (当前: v6上行/v4下行)"
     else
-        change_list[9]="切换分离类型 (当前: v4上行/v6下行)"
+        change_list[8]="切换分离类型 (当前: v4上行/v6下行)"
     fi
+    # show current outbound strategy in menu
+    local _cur_out_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' "$is_config_json" 2>/dev/null)
+    local _cur_out_label="双栈优选"
+    case "$_cur_out_strategy" in
+        UseIPv4) _cur_out_label="v4优先" ;;
+        UseIPv6|UseIPv6v4) _cur_out_label="v6优先" ;;
+        UseIPv4v6) _cur_out_label="双栈优选" ;;
+    esac
+    change_list[10]="切换出站 IP 优先 (当前: $_cur_out_label)"
     
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {
@@ -950,18 +962,6 @@ change() {
         add $net
         ;;
     8)
-        # toggle v6only
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
-        if [[ $v6_only == 'true' ]]; then
-            v6_only=false
-            _ok "v6only 已关闭"
-        else
-            v6_only=true
-            _ok "v6only 已开启"
-        fi
-        add $net
-        ;;
-    9)
         # toggle route mode
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         if [[ -f $is_conf_dir/is_v6_uplink ]]; then
@@ -975,8 +975,25 @@ change() {
         fi
         add $net
         ;;
-    10)
+    9)
         manage_custom_rules
+        ;;
+    10)
+        # switch outbound IP priority
+        echo
+        ask list ip_pref "v4优先(UseIPv4) v6优先(UseIPv6) 双栈优选(UseIPv4v6)" "\n  当前出站策略为: $_cur_out_label ($_cur_out_strategy)\n  请选择新的出站 IP 优先策略:"
+        [[ $REPLY == "0" ]] && return
+        local new_strategy="UseIPv4v6"
+        case $REPLY in
+        1) new_strategy="UseIPv4" ;;
+        2) new_strategy="UseIPv6" ;;
+        3) new_strategy="UseIPv4v6" ;;
+        esac
+        jq '(.outbounds[] | select(.tag=="direct") | .settings.domainStrategy) = "'$new_strategy'"' "$is_config_json" > "${is_config_json}.tmp" && mv -f "${is_config_json}.tmp" "$is_config_json"
+        _ok "已切换出站 IP 优先为: $new_strategy"
+        manage restart &
+        sleep 1
+        _ok "配置已更新并重启 Xray"
         ;;
     esac
 }
@@ -1242,7 +1259,6 @@ get() {
             v6_dest=$(jq -r '.inbounds[1].streamSettings.realitySettings.dest // ""' <<<$is_json_str)
             v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$is_json_str)
             v6_short_ids=$(jq -c '.inbounds[1].streamSettings.realitySettings.shortIds // [""]' <<<$is_json_str)
-            v6_only=$(jq -r '.inbounds[1].streamSettings.sockopt.v6only // false' <<<$is_json_str)
             
             # xhttp parsing
             v4_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$is_json_str)
@@ -1639,13 +1655,14 @@ _reset_state() {
     unset net is_reality is_old_net is_dynamic_port
     unset port uuid is_private_key is_public_key
     unset v4_sni v6_sni v4_dest v6_dest v4_path v6_path
-    unset v4_short_ids v6_short_ids v6_only
+    unset v4_short_ids v6_short_ids
     unset is_change is_change_id is_change_msg is_dont_show_info
     unset is_auto_get_config is_no_del_msg is_new_json
     unset is_addr is_v4_sid is_v6_sid is_v6_uplink
     unset host is_conf_dir_empty
     unset is_api_fail is_run_fail is_no_manage_msg
     unset is_core_stop
+
     # re-check core status
     if [[ $(pgrep -f $is_core_bin) ]]; then
         is_core_status="${green}● 运行中${none}"
@@ -1688,10 +1705,13 @@ _check_sni_status() {
         return
     fi
     _ov_sni_checked=1
-    
+
     _ov_v4_sni_status=""
     _ov_v6_sni_status=""
+    _ov_v4_cdn_status=""
+    _ov_v6_cdn_status=""
     _ov_sni_warning=""
+    _ov_cdn_warning=""
 
     local v4_tmp="/tmp/.v4_sni_res_$$"
     local v6_tmp="/tmp/.v6_sni_res_$$"
@@ -1699,26 +1719,57 @@ _check_sni_status() {
     local pid_v4=""
     local pid_v6=""
 
+    # 每个子 shell 同时检测 TLS 和 CDN，输出格式: TLS_OK|CDN_OK 或 TLS_FAIL|CDN:名称|归属
     if [[ $_ov_v4_sni ]]; then
         (
+            # ── TLS 检测 ──
+            tls_res="TLS_FAIL"
             res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v4_sni" 2>&1)
             if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                echo "OK"
-            else
-                echo "FAIL"
+                tls_res="TLS_OK"
             fi
+            # ── CDN 检测 ──
+            cdn_res="CDN_SKIP"
+            first_ip=$(getent ahosts "$_ov_v4_sni" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
+            [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$_ov_v4_sni" 2>/dev/null | awk '{print $1}' | head -1)
+            if [[ -n "$first_ip" ]]; then
+                org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
+                if [[ -n "$org" ]]; then
+                    cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST" | head -1)
+                    if [[ -n "$cdn_name" ]]; then
+                        cdn_res="CDN:$cdn_name|$org"
+                    else
+                        cdn_res="CDN_OK"
+                    fi
+                fi
+            fi
+            echo "${tls_res}|${cdn_res}"
         ) > "$v4_tmp" &
         pid_v4=$!
     fi
 
     if [[ $_ov_v6_sni ]]; then
         (
+            tls_res="TLS_FAIL"
             res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v6_sni" 2>&1)
             if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                echo "OK"
-            else
-                echo "FAIL"
+                tls_res="TLS_OK"
             fi
+            cdn_res="CDN_SKIP"
+            first_ip=$(getent ahosts "$_ov_v6_sni" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
+            [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$_ov_v6_sni" 2>/dev/null | awk '{print $1}' | head -1)
+            if [[ -n "$first_ip" ]]; then
+                org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
+                if [[ -n "$org" ]]; then
+                    cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST" | head -1)
+                    if [[ -n "$cdn_name" ]]; then
+                        cdn_res="CDN:$cdn_name|$org"
+                    else
+                        cdn_res="CDN_OK"
+                    fi
+                fi
+            fi
+            echo "${tls_res}|${cdn_res}"
         ) > "$v6_tmp" &
         pid_v6=$!
     fi
@@ -1726,23 +1777,51 @@ _check_sni_status() {
     [[ $pid_v4 ]] && wait $pid_v4
     [[ $pid_v6 ]] && wait $pid_v6
 
-    if [[ $_ov_v4_sni ]]; then
-        if [[ -f $v4_tmp && $(cat "$v4_tmp") == "OK" ]]; then
+    # ── 解析 v4 结果 ──
+    if [[ $_ov_v4_sni && -f $v4_tmp ]]; then
+        local v4_raw=$(cat "$v4_tmp")
+        local v4_tls=${v4_raw%%|*}
+        local v4_cdn=${v4_raw#*|}
+        # TLS 状态
+        if [[ "$v4_tls" == "TLS_OK" ]]; then
             _ov_v4_sni_status="${green}✓${none} "
         else
             _ov_v4_sni_status="${red}✗${none} "
             _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
         fi
+        # CDN 状态
+        case "$v4_cdn" in
+        CDN:*)
+            local v4_cdn_name=$(echo "$v4_cdn" | cut -d: -f2 | cut -d'|' -f1)
+            local v4_cdn_org=$(echo "$v4_cdn" | cut -d'|' -f2)
+            _ov_v4_cdn_status="${red}CDN${none} "
+            _ov_cdn_warning+="  [警告] v4 域名 ($_ov_v4_sni) 挂了 CDN（$v4_cdn_name: $v4_cdn_org），请更换域名！\n"
+            ;;
+        esac
         rm -f "$v4_tmp"
     fi
 
-    if [[ $_ov_v6_sni ]]; then
-        if [[ -f $v6_tmp && $(cat "$v6_tmp") == "OK" ]]; then
+    # ── 解析 v6 结果 ──
+    if [[ $_ov_v6_sni && -f $v6_tmp ]]; then
+        local v6_raw=$(cat "$v6_tmp")
+        local v6_tls=${v6_raw%%|*}
+        local v6_cdn=${v6_raw#*|}
+        # TLS 状态
+        if [[ "$v6_tls" == "TLS_OK" ]]; then
             _ov_v6_sni_status="${green}✓${none} "
         else
             _ov_v6_sni_status="${red}✗${none} "
             _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
         fi
+        # CDN 状态
+        case "$v6_cdn" in
+        CDN:*)
+            local v6_cdn_name=$(echo "$v6_cdn" | cut -d: -f2 | cut -d'|' -f1)
+            local v6_cdn_org=$(echo "$v6_cdn" | cut -d'|' -f2)
+            _ov_v6_cdn_status="${red}CDN${none} "
+            _ov_cdn_warning+="  [警告] v6 域名 ($_ov_v6_sni) 挂了 CDN（$v6_cdn_name: $v6_cdn_org），请更换域名！\n"
+            ;;
+        esac
         rm -f "$v6_tmp"
     fi
 }
@@ -1753,7 +1832,6 @@ _get_overview() {
     _ov_port=""
     _ov_v4_sni=""
     _ov_v6_sni=""
-    _ov_v6only=""
     _ov_route_mode=""
     _ov_log_level=""
     _ov_fw_ports=""
@@ -1778,9 +1856,7 @@ _get_overview() {
             _ov_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$json_str 2>/dev/null)
             _ov_pbk=$(jq -r '.inbounds[0].streamSettings.realitySettings.publicKey // ""' <<<$json_str 2>/dev/null)
             _ov_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' <<<$json_str 2>/dev/null)
-            
-            local v6o=$(jq -r '.inbounds[1].streamSettings.sockopt.v6only // false' <<<$json_str 2>/dev/null)
-            [[ "$v6o" == "true" ]] && _ov_v6only="开启" || _ov_v6only="关闭"
+
         fi
     fi
 
@@ -1850,13 +1926,12 @@ misc_menu() {
         _menu 1 "测试运行"
         _menu 2 "查看综合日志"
         _menu 3 "修改日志等级"
-        _menu 4 "切换出站 IP 优先 (IPv4 / IPv6)"
-        _menu 5 "端口管理 (放行/关闭)"
-        _menu 6 "更新"
-        _menu 7 "卸载"
+        _menu 4 "端口管理 (放行/关闭)"
+        _menu 5 "更新"
+        _menu 6 "卸载"
         
         echo
-        echo -ne "  请选择 [${green}1-7${none}] [${red}0 返回主菜单${none}]: "
+        echo -ne "  请选择 [${green}1-6${none}] [${red}0 返回主菜单${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && return
         
@@ -1880,24 +1955,6 @@ misc_menu() {
             ;;
         4)
             echo
-            ask list ip_pref "v4优先(UseIPv4) v6优先(UseIPv6) 双栈优选(UseIPv4v6)" "\n  当前出站策略为: $_ov_outbound_pref ($_ov_outbound_strategy)\n  请选择新的出站 IP 优先策略:"
-            [[ $REPLY == "0" ]] && continue
-            local new_strategy="UseIPv4v6"
-            case $REPLY in
-            1) new_strategy="UseIPv4" ;;
-            2) new_strategy="UseIPv6" ;;
-            3) new_strategy="UseIPv4v6" ;;
-            esac
-            
-            # Use jq to safely update only the direct outbound's domainStrategy
-            jq '(.outbounds[] | select(.tag=="direct") | .settings.domainStrategy) = "'$new_strategy'"' "$is_config_json" > "${is_config_json}.tmp" && mv -f "${is_config_json}.tmp" "$is_config_json"
-            
-            _ok "已切换出站 IP 优先为: $new_strategy"
-            manage restart
-            sleep 1
-            ;;
-        5)
-            echo
             ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
             [[ $REPLY == "0" ]] && continue
             local action=$(echo $p | awk '{print $1}')
@@ -1915,7 +1972,7 @@ misc_menu() {
             fi
             pause
             ;;
-        6)
+        5)
             echo
             is_tmp_list=("更新$is_core_name" "更新脚本")
             ask list is_do_update null "\n  请选择更新:\n"
@@ -1923,7 +1980,7 @@ misc_menu() {
             update $REPLY
             pause
             ;;
-        7)
+        6)
             uninstall
             exit 0
             ;;
@@ -1948,14 +2005,11 @@ is_main_menu() {
             if [[ ${#short_pbk} -gt 25 ]]; then
                 short_pbk="${short_pbk:0:15}...${short_pbk:(-5)}"
             fi
-            
-            local v6o_color="${gray}关闭${none}"
-            [[ "$_ov_v6only" == "开启" ]] && v6o_color="${green}开启${none}"
 
             echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
             echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
-            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
-            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}   v6only: $v6o_color"
+            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status$_ov_v4_cdn_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
+            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status$_ov_v6_cdn_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
         else
@@ -1976,10 +2030,11 @@ is_main_menu() {
         _section "杂项"
         _menu 6 "杂项管理 (包含日志/更新等)"
 
-        if [[ $_ov_ip_warning || $_ov_sni_warning ]]; then
+        if [[ $_ov_ip_warning || $_ov_sni_warning || $_ov_cdn_warning ]]; then
             echo
             [[ $_ov_ip_warning ]] && echo -ne "${red}${_ov_ip_warning}${none}"
             [[ $_ov_sni_warning ]] && echo -ne "${red}${_ov_sni_warning}${none}"
+            [[ $_ov_cdn_warning ]] && echo -ne "${red}${_ov_cdn_warning}${none}"
         fi
 
         echo

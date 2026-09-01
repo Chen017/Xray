@@ -20,17 +20,24 @@
 - 安全探针：
   - 自动探测当前服务器 IP 的 GFW 连通性状态。
   - SNI 安全自检：校验伪装域名的证书及 TLS 1.3, h2等。在面板提供 `✓` 或 `✗` 的可视化标记与预警提醒。
+  - CDN 检测：自动检测伪装域名 IP 的 ASN 归属，若命中 CDN/云厂商黑名单（Cloudflare、Akamai、CloudFront、Google、Azure 等），在面板标记红色 `CDN` 警告并提示更换域名。
 - 安全策略与分流：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
 - 配置交互：
   - 支持更改端口（仅支持 443/8443）、路径、UUID、密钥对、各栈 SNI 伪装域名与 ShortIds。
   - 支持增加与删除自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct` 与阻止 `block`）。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
+  - 支持切换出站 IP 优先策略 (IPv4 / IPv6 / 双栈优选)，适配不同双栈或纯 IPv6 机器需求。
   - 支持选择 XHTTP 双栈分离或仅 Vision Reality 部署模式，输出对应的 Mihomo YAML 或 VLESS 分享链接。
 - 运维支持：
   - 合并双端配置文件，提供服务端 JSON 配置预览。
   - 支持查看综合日志（混合输出 access.log 与 error.log）、修改日志等级、一键测试运行。
-  - 支持切换出站 IP 优先策略 (IPv4 / IPv6)，适配不同双栈或纯 IPv6 机器需求。
   - 防火墙双栈端口一键统管（放行/关闭）、核心及脚本的在线升级。
+
+## ⚙️ 兼容性
+
+- 支持系统：Ubuntu / Debian / CentOS
+- 架构：x86_64 / arm64
+- Xray 版本：跟随 [XTLS/Xray-core](https://github.com/XTLS/Xray-core) 最新 Release 自动拉取
 
 ## ⚡ 快速开始
 
