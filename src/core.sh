@@ -13,16 +13,12 @@ change_list=(
     "管理自定义分流规则"
     "切换出站 IP 优先"
 )
-servername_list=(
-    www.magicardshop.jp
-    dova-s.jp
-    hf-mirror.com
-    hahuma.com
-    dodoshort.com
-)
+# 默认 SNI: 上行固定 hahuma.com，下行固定 dodoshort.com
+DEFAULT_UPLINK_SNI="hahuma.com"
+DEFAULT_DOWNLINK_SNI="dodoshort.com"
 
-# CDN / 云厂商黑名单 — 命中任何一个则认为域名挂了 CDN，不适合做 Reality dest
-CDN_BLACKLIST="Cloudflare|Fastly|Akamai|CloudFront|Amazon|Microsoft|Google|Azure|Incapsula|Imperva"
+# 纯 CDN 厂商黑名单（仅 fallback 场景使用，排除同时提供云主机的厂商如 Akamai/Amazon/Google/Microsoft）
+CDN_BLACKLIST_STRICT="Cloudflare|Fastly|CloudFront|Incapsula|Imperva|Edgecast|StackPath|KeyCDN"
 
 msg() {
     echo -e "$@"
@@ -88,15 +84,63 @@ get_pbk() {
     is_public_key=${is_tmp_pbk[1]}
 }
 
-get_random_sni() {
-    local len=${#servername_list[@]}
-    local idx1=$((RANDOM % len))
-    local idx2=$((RANDOM % len))
-    while [[ $idx2 == $idx1 ]]; do
-        idx2=$((RANDOM % len))
-    done
-    tmp_v4_sni=${servername_list[$idx1]}
-    tmp_v6_sni=${servername_list[$idx2]}
+get_default_sni() {
+    # 根据路由模式分配默认 SNI，确保上行始终为 hahuma.com，下行始终为 dodoshort.com
+    if [[ $is_v6_uplink ]]; then
+        # v6 上行模式：v6_sni 是上行，v4_sni 是下行
+        tmp_v4_sni=$DEFAULT_DOWNLINK_SNI
+        tmp_v6_sni=$DEFAULT_UPLINK_SNI
+    else
+        # v4 上行模式（默认）：v4_sni 是上行，v6_sni 是下行
+        tmp_v4_sni=$DEFAULT_UPLINK_SNI
+        tmp_v6_sni=$DEFAULT_DOWNLINK_SNI
+    fi
+}
+
+# 多 DNS 视角 CDN 检测：向多个地理分散的公共 DNS 查询，去重后 IP > 1 即判定为 CDN
+_detect_cdn() {
+    local domain="$1"
+    local dns_servers=("8.8.8.8" "1.1.1.1" "208.67.222.222" "9.9.9.9")
+    local all_ips=""
+
+    if command -v dig &>/dev/null; then
+        # 优先使用 dig
+        for ns in "${dns_servers[@]}"; do
+            local ips=$(dig +short +time=2 +tries=1 A "$domain" @"$ns" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
+        done
+    elif command -v nslookup &>/dev/null; then
+        # 降级到 nslookup
+        for ns in "${dns_servers[@]}"; do
+            local ips=$(nslookup "$domain" "$ns" 2>/dev/null | awk '/^Address:/ && !/#/ {print $2}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
+        done
+    else
+        # fallback: getent + ipinfo（使用缩减后的纯 CDN 黑名单）
+        local first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
+        [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -n "$first_ip" ]]; then
+            local org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
+            if [[ -n "$org" ]]; then
+                local cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST_STRICT" | head -1)
+                if [[ -n "$cdn_name" ]]; then
+                    echo "CDN:$cdn_name|$org"
+                    return
+                fi
+            fi
+        fi
+        echo "CDN_OK"
+        return
+    fi
+
+    # 去重统计唯一 IP 数
+    local unique_count=$(echo "$all_ips" | sed '/^$/d' | sort -u | wc -l)
+    if [[ $unique_count -gt 1 ]]; then
+        local ip_list=$(echo "$all_ips" | sed '/^$/d' | sort -u | head -5 | tr '\n' ',' | sed 's/,$//')
+        echo "CDN:Anycast/GeoDNS|多 DNS 解析到 ${unique_count} 个不同 IP ($ip_list)"
+    else
+        echo "CDN_OK"
+    fi
 }
 
 show_list() {
@@ -1210,14 +1254,14 @@ get() {
                 touch $is_conf_dir/is_v6_uplink
             fi
             is_default_arg="empty_allowed"
-            ask string is_new_v4_sni "  请输入 v4 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            ask string is_new_v4_sni "  请输入 v4 目标域名 (SNI/Dest) [直接回车使用默认]:"
             [[ $is_new_v4_sni ]] && export v4_sni=$is_new_v4_sni
             is_default_arg="empty_allowed"
-            ask string is_new_v6_sni "  请输入 v6 目标域名 (SNI/Dest) [直接回车随机生成]:"
+            ask string is_new_v6_sni "  请输入 v6 目标域名 (SNI/Dest) [直接回车使用默认]:"
             [[ $is_new_v6_sni ]] && export v6_sni=$is_new_v6_sni
         fi
         if [[ ! $v4_sni || ! $v6_sni ]]; then
-            get_random_sni
+            get_default_sni
             [[ ! $v4_sni ]] && v4_sni=$tmp_v4_sni
             [[ ! $v6_sni ]] && v6_sni=$tmp_v6_sni
         fi
@@ -1728,21 +1772,8 @@ _check_sni_status() {
             if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
                 tls_res="TLS_OK"
             fi
-            # ── CDN 检测 ──
-            cdn_res="CDN_SKIP"
-            first_ip=$(getent ahosts "$_ov_v4_sni" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
-            [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$_ov_v4_sni" 2>/dev/null | awk '{print $1}' | head -1)
-            if [[ -n "$first_ip" ]]; then
-                org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
-                if [[ -n "$org" ]]; then
-                    cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST" | head -1)
-                    if [[ -n "$cdn_name" ]]; then
-                        cdn_res="CDN:$cdn_name|$org"
-                    else
-                        cdn_res="CDN_OK"
-                    fi
-                fi
-            fi
+            # ── CDN 检测（多 DNS 视角）──
+            cdn_res=$(_detect_cdn "$_ov_v4_sni")
             echo "${tls_res}|${cdn_res}"
         ) > "$v4_tmp" &
         pid_v4=$!
@@ -1755,20 +1786,8 @@ _check_sni_status() {
             if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
                 tls_res="TLS_OK"
             fi
-            cdn_res="CDN_SKIP"
-            first_ip=$(getent ahosts "$_ov_v6_sni" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
-            [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$_ov_v6_sni" 2>/dev/null | awk '{print $1}' | head -1)
-            if [[ -n "$first_ip" ]]; then
-                org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
-                if [[ -n "$org" ]]; then
-                    cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST" | head -1)
-                    if [[ -n "$cdn_name" ]]; then
-                        cdn_res="CDN:$cdn_name|$org"
-                    else
-                        cdn_res="CDN_OK"
-                    fi
-                fi
-            fi
+            # ── CDN 检测（多 DNS 视角）──
+            cdn_res=$(_detect_cdn "$_ov_v6_sni")
             echo "${tls_res}|${cdn_res}"
         ) > "$v6_tmp" &
         pid_v6=$!
