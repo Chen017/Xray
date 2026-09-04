@@ -434,6 +434,13 @@ main() {
 
     # ─── setup baseline firewall ──────────────────────────────
     _ok "正在配置基础防火墙规则..."
+
+    # auto-detect SSH port (sshd_config → ss → fallback 22)
+    is_ssh_port=$(grep -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    [[ -z $is_ssh_port ]] && is_ssh_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|"ssh"' | awk '{print $4}' | sed 's/.*://' | head -1)
+    [[ -z $is_ssh_port ]] && is_ssh_port=22
+
+    # install iptables + persistence tools
     if ! command -v iptables &>/dev/null; then
         if [[ $cmd =~ apt ]]; then
             DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
@@ -442,46 +449,67 @@ main() {
             systemctl enable --now iptables &>/dev/null
             systemctl enable --now ip6tables &>/dev/null
         fi
+    else
+        # iptables already present — ensure persistence tools exist
+        if [[ $cmd =~ apt ]] && ! dpkg -l iptables-persistent &>/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive $cmd install -y netfilter-persistent iptables-persistent &>/dev/null
+        fi
     fi
+
     if command -v iptables &>/dev/null; then
-        # ── IPv4 baseline rules ──
-        iptables -F INPUT
+        # ── IPv4: temp ACCEPT → flush → rules → DROP ──
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+        iptables -F
+        iptables -X
+        iptables -Z
+
         iptables -A INPUT -i lo -j ACCEPT
-        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         iptables -A INPUT -p icmp -j ACCEPT
-        iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+        iptables -A INPUT -p tcp --dport $is_ssh_port -j ACCEPT
         iptables -A INPUT -p tcp --dport 443 -j ACCEPT
         iptables -A INPUT -p udp --dport 443 -j ACCEPT
-        iptables -A INPUT -p tcp --dport 8443 -j ACCEPT
-        iptables -A INPUT -p udp --dport 8443 -j ACCEPT
-        iptables -P INPUT DROP
 
-        # ── IPv6 baseline rules ──
+        iptables -P INPUT DROP
+        iptables -P FORWARD DROP
+        iptables -P OUTPUT ACCEPT
+
+        # ── IPv6: temp ACCEPT → flush → rules → DROP ──
         if command -v ip6tables &>/dev/null; then
-            ip6tables -F INPUT
+            ip6tables -P INPUT ACCEPT
+            ip6tables -P FORWARD ACCEPT
+            ip6tables -P OUTPUT ACCEPT
+            ip6tables -F
+            ip6tables -X
+            ip6tables -Z
+
             ip6tables -A INPUT -i lo -j ACCEPT
-            ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+            ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
             ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
-            ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+            ip6tables -A INPUT -p tcp --dport $is_ssh_port -j ACCEPT
             ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
             ip6tables -A INPUT -p udp --dport 443 -j ACCEPT
-            ip6tables -A INPUT -p tcp --dport 8443 -j ACCEPT
-            ip6tables -A INPUT -p udp --dport 8443 -j ACCEPT
+
             ip6tables -P INPUT DROP
+            ip6tables -P FORWARD DROP
+            ip6tables -P OUTPUT ACCEPT
         fi
 
-        # ── persist rules ──
-        if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
+        # ── persist rules & enable on boot ──
+        if [[ $(type -P netfilter-persistent) ]]; then
+            netfilter-persistent save &>/dev/null
+            systemctl enable netfilter-persistent &>/dev/null
+        elif [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
             iptables-save > /etc/iptables/rules.v4
             [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
-        elif [[ $(type -P netfilter-persistent) ]]; then
-            netfilter-persistent save &>/dev/null
         elif [[ $(type -P service) ]]; then
             service iptables save &>/dev/null 2>&1
             service ip6tables save &>/dev/null 2>&1
         fi
         > $is_core_dir/.fw_init_done
-        _ok "防火墙已配置: SSH(22) + Xray(443/8443) 放行, 其余入站拒绝"
+        _ok "防火墙已配置: SSH($is_ssh_port) + HTTPS(443) 放行, 其余入站拒绝"
     fi
 
     # create condf dir
