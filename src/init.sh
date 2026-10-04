@@ -318,17 +318,40 @@ if [[ -f $is_relay_state_file ]] && command -v jq &>/dev/null; then
     _r_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
     if [[ "$_r_role" == "line" && -f $is_config_json ]]; then
         _r_flow=$(jq -r '.outbounds[]? | select(.tag == "relay-out") | (.settings.flow // .settings.vnext[0]?.users[0]?.flow // empty)' "$is_config_json" 2>/dev/null)
-        if [[ "$_r_flow" == "xtls-rprx-vision-udp443" ]]; then
+        _r_tfo=$(jq -r '.outbounds[]? | select(.tag == "relay-out") | .streamSettings.sockopt.tcpFastOpen // empty' "$is_config_json" 2>/dev/null)
+        if [[ "$_r_flow" == "xtls-rprx-vision-udp443" || "$_r_tfo" == "true" ]]; then
             _r_rebuild_needed=1
         fi
+        unset _r_tfo
+    elif [[ "$_r_role" == "landing" && -f "$is_conf_dir/99_relay_in.json" ]]; then
+        if grep -q "tcpFastOpen" "$is_conf_dir/99_relay_in.json" 2>/dev/null; then
+            _temp_relay_conf=$(mktemp)
+            if jq '
+                (
+                    .inbounds[]? | select(.tag == "relay-in") | .streamSettings
+                ) |= (
+                    if .sockopt then del(.sockopt.tcpFastOpen) else . end |
+                    if .sockopt == {} then del(.sockopt) else . end
+                )
+            ' "$is_conf_dir/99_relay_in.json" > "$_temp_relay_conf" 2>/dev/null; then
+                if [[ -s "$_temp_relay_conf" ]]; then
+                    mv -f "$_temp_relay_conf" "$is_conf_dir/99_relay_in.json"
+                    _r_rebuild_needed=1
+                fi
+            fi
+            rm -f "$_temp_relay_conf"
+        fi
     fi
-    unset _r_role _r_flow
+    unset _r_flow
 fi
 
 load core.sh
 if [[ $_r_rebuild_needed ]]; then
-    rebuild_main_config
+    if [[ "$_r_role" == "line" ]]; then
+        rebuild_main_config
+    fi
     manage restart &>/dev/null
     unset _r_rebuild_needed
 fi
+unset _r_role
 is_main_menu

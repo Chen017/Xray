@@ -759,10 +759,7 @@ rebuild_main_config() {
                 },
                 "streamSettings": {
                     "network": "raw",
-                    "security": "none",
-                    "sockopt": {
-                        "tcpFastOpen": true
-                    }
+                    "security": "none"
                 },
                 "mux": {
                     "enabled": false
@@ -1267,10 +1264,7 @@ relay_create_landing_inbound() {
       },
       "streamSettings": {
         "network": "raw",
-        "security": "none",
-        "sockopt": {
-          "tcpFastOpen": true
-        }
+        "security": "none"
       },
       "sniffing": {
         "enabled": true,
@@ -1795,10 +1789,7 @@ relay_test() {
       },
       "streamSettings": {
         "network": "raw",
-        "security": "none",
-        "sockopt": {
-          "tcpFastOpen": true
-        }
+        "security": "none"
       },
       "mux": {
         "enabled": false
