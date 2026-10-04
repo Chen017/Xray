@@ -1,5 +1,5 @@
 #!/bin/bash
 
-is_sh_ver=v2.5.1
+is_sh_ver=v2.5.2
 
 . /usr/local/etc/xray/sh/src/init.sh
