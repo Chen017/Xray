@@ -988,7 +988,10 @@ relay_validate_ipv4() {
     local IFS='.'
     local -a octets=($ip)
     for octet in "${octets[@]}"; do
-        if (( octet < 0 || octet > 255 )); then
+        if [[ "$octet" =~ ^0[0-9]+$ ]]; then
+            return 1
+        fi
+        if (( 10#$octet < 0 || 10#$octet > 255 )); then
             return 1
         fi
     done
@@ -1010,7 +1013,7 @@ relay_validate_uuid() {
 
 relay_validate_vless_encryption() {
     local enc="$1"
-    [[ -n "$enc" && ${#enc} -ge 10 && "$enc" =~ ^[A-Za-z0-9+/=_:-]+$ ]]
+    [[ "$enc" =~ ^[a-z0-9]+\.[a-z0-9]+\.(0rtt|[0-9]+s)\.[A-Za-z0-9_-]{40,}$ ]]
 }
 
 # ─── relay uri builder & parser ──────────────────────────
@@ -1146,20 +1149,6 @@ relay_generate_vlessenc() {
     vlessenc_decryption=""
     vlessenc_encryption=""
 
-    # 1. Try --json first
-    local json_out
-    json_out=$($is_core_bin vlessenc --json 2>/dev/null)
-    if [[ $? -eq 0 && -n "$json_out" ]] && echo "$json_out" | jq . &>/dev/null; then
-        local dec=$(echo "$json_out" | jq -r 'if type=="array" then ((.[] | select(.authentication=="X25519" or .type=="X25519") // .[0]) | .decryption // empty) else .decryption // empty end' 2>/dev/null)
-        local enc=$(echo "$json_out" | jq -r 'if type=="array" then ((.[] | select(.authentication=="X25519" or .type=="X25519") // .[0]) | .encryption // empty) else .encryption // empty end' 2>/dev/null)
-        if relay_validate_vless_encryption "$dec" && relay_validate_vless_encryption "$enc"; then
-            vlessenc_decryption="$dec"
-            vlessenc_encryption="$enc"
-            return 0
-        fi
-    fi
-
-    # 2. Text output
     local txt_out
     txt_out=$($is_core_bin vlessenc 2>/dev/null)
     if [[ $? -ne 0 || -z "$txt_out" ]]; then
@@ -1168,22 +1157,56 @@ relay_generate_vlessenc() {
 
     local dec=""
     local enc=""
+
+    # 1. Extract specifically under the Authentication: X25519 section
     dec=$(echo "$txt_out" | awk '
-        BEGIN{IGNORECASE=1}
-        /x25519/{x=1}
-        x && /decryption:/{sub(/^.*:[ \t]*/, ""); print; exit}
-    ' | tr -d '\r\n[:space:]')
-    enc=$(echo "$txt_out" | awk '
-        BEGIN{IGNORECASE=1}
-        /x25519/{x=1}
-        x && /encryption:/{sub(/^.*:[ \t]*/, ""); print; exit}
+        BEGIN { in_x25519=0 }
+        tolower($0) ~ /authentication:[ \t]*x25519/ { in_x25519=1; next }
+        tolower($0) ~ /authentication:/ { if (in_x25519) exit }
+        in_x25519 && /"decryption"/ {
+            s = $0
+            sub(/^.*"decryption"[ \t]*:[ \t]*"/, "", s)
+            sub(/".*$/, "", s)
+            print s
+            exit
+        }
     ' | tr -d '\r\n[:space:]')
 
+    enc=$(echo "$txt_out" | awk '
+        BEGIN { in_x25519=0 }
+        tolower($0) ~ /authentication:[ \t]*x25519/ { in_x25519=1; next }
+        tolower($0) ~ /authentication:/ { if (in_x25519) exit }
+        in_x25519 && /"encryption"/ {
+            s = $0
+            sub(/^.*"encryption"[ \t]*:[ \t]*"/, "", s)
+            sub(/".*$/, "", s)
+            print s
+            exit
+        }
+    ' | tr -d '\r\n[:space:]')
+
+    # 2. Fallback: if section header not found, extract first "decryption" and "encryption" pair (which is X25519)
     if [[ -z "$dec" ]]; then
-        dec=$(echo "$txt_out" | awk 'BEGIN{IGNORECASE=1} /decryption:/{sub(/^.*:[ \t]*/, ""); print; exit}' | tr -d '\r\n[:space:]')
+        dec=$(echo "$txt_out" | awk '
+            /"decryption"/ {
+                s = $0
+                sub(/^.*"decryption"[ \t]*:[ \t]*"/, "", s)
+                sub(/".*$/, "", s)
+                print s
+                exit
+            }
+        ' | tr -d '\r\n[:space:]')
     fi
     if [[ -z "$enc" ]]; then
-        enc=$(echo "$txt_out" | awk 'BEGIN{IGNORECASE=1} /encryption:/{sub(/^.*:[ \t]*/, ""); print; exit}' | tr -d '\r\n[:space:]')
+        enc=$(echo "$txt_out" | awk '
+            /"encryption"/ {
+                s = $0
+                sub(/^.*"encryption"[ \t]*:[ \t]*"/, "", s)
+                sub(/".*$/, "", s)
+                print s
+                exit
+            }
+        ' | tr -d '\r\n[:space:]')
     fi
 
     if relay_validate_vless_encryption "$dec" && relay_validate_vless_encryption "$enc"; then
@@ -1424,6 +1447,32 @@ relay_setup_landing() {
         return 1
     fi
 
+    local landing_pub_ip=""
+    get_ip
+    if relay_validate_ipv4 "$ip"; then
+        landing_pub_ip="$ip"
+    fi
+    if [[ -z "$landing_pub_ip" ]]; then
+        local fetched_v4=$(curl -s4m 3 https://api.ipify.org 2>/dev/null || curl -s4m 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+        if relay_validate_ipv4 "$fetched_v4"; then
+            landing_pub_ip="$fetched_v4"
+        fi
+    fi
+    if [[ -z "$landing_pub_ip" ]]; then
+        echo
+        echo -e "  ${yellow}未能自动获取到落地机的公网 IPv4 地址。${none}"
+        prompt_input "请输入本机 (落地机) 的公网 IPv4 地址" landing_pub_ip
+        [[ -z "$landing_pub_ip" ]] && return 1
+        if ! relay_validate_ipv4 "$landing_pub_ip"; then
+            _fail "输入的落地机 IPv4 地址格式无效: $landing_pub_ip"
+            return 1
+        fi
+    fi
+    if [[ "$landing_pub_ip" == "$peer_ip" ]]; then
+        _fail "落地机公网 IPv4 ($landing_pub_ip) 不能与线路机 IP ($peer_ip) 相同！"
+        return 1
+    fi
+
     _step "正在选择中继监听端口 (20000-60000) ..."
     local relay_port=$(relay_get_random_port)
     if [[ -z "$relay_port" ]]; then
@@ -1446,12 +1495,14 @@ relay_setup_landing() {
 
     local landing_state=$(jq -n \
         --arg peer "$peer_ip" \
+        --arg lip "$landing_pub_ip" \
         --argjson port "$relay_port" \
         --arg tuuid "$transport_uuid" \
         --arg dec "$dec" \
         --arg enc "$enc" '{
             "version": 1,
             "role": "landing",
+            "landing_ip": $lip,
             "peer_ip": $peer,
             "listen_port": $port,
             "transport_uuid": $tuuid,
@@ -1478,8 +1529,6 @@ relay_setup_landing() {
 
     relay_cleanup_backup
 
-    get_ip
-    local landing_pub_ip="${ip:-$peer_ip}"
     local relay_link=$(relay_build_link "$transport_uuid" "$landing_pub_ip" "$relay_port" "$enc")
 
     echo
@@ -1697,7 +1746,23 @@ relay_test() {
     _ok "TCP 连接正常"
 
     _step "正在执行完整链路端到端出口测试..."
-    local test_socks_port=$(awk 'BEGIN{srand(); print int(30000 + rand() * 20001)}')
+    local test_socks_port=""
+    local candidate
+    local attempt
+    for (( attempt=0; attempt<30; attempt++ )); do
+        candidate=$(awk 'BEGIN{srand(); print int(30000 + rand() * 20001)}')
+        if [[ -z "$(is_test port_used $candidate)" ]]; then
+            if ! (type -P ss &>/dev/null && ss -tunlp 2>/dev/null | grep -q ":${candidate}\b") && \
+               ! (type -P netstat &>/dev/null && netstat -tunlp 2>/dev/null | grep -q ":${candidate}\b"); then
+                test_socks_port=$candidate
+                break
+            fi
+        fi
+    done
+    if [[ -z "$test_socks_port" ]]; then
+        _fail "无法获取未占用的临时测试端口"
+        return 1
+    fi
     local tmp_test_cfg="/tmp/relay_test_$$.json"
 
     cat <<EOF >"$tmp_test_cfg"
@@ -1800,6 +1865,8 @@ relay_view_info_landing() {
     local dec=$(jq -r '.decryption // ""' "$is_relay_state_file")
     local enc=$(jq -r '.encryption // ""' "$is_relay_state_file")
 
+    local landing_pub_ip=$(jq -r '.landing_ip // ""' "$is_relay_state_file")
+
     _kv "角色:" "落地机 (landing)"
     _kv "放行线路 IP:" "$pip"
     _kv "监听端口:" "$lport"
@@ -1808,8 +1875,27 @@ relay_view_info_landing() {
     _kv "落地解密参数:" "$dec"
     _kv "线路加密参数:" "$enc"
     echo
-    get_ip
-    local landing_pub_ip="${ip:-$pip}"
+
+    if ! relay_validate_ipv4 "$landing_pub_ip"; then
+        get_ip
+        if relay_validate_ipv4 "$ip"; then
+            landing_pub_ip="$ip"
+        else
+            local fetched_v4=$(curl -s4m 3 https://api.ipify.org 2>/dev/null || curl -s4m 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+            if relay_validate_ipv4 "$fetched_v4"; then
+                landing_pub_ip="$fetched_v4"
+            else
+                landing_pub_ip=""
+            fi
+        fi
+    fi
+
+    if [[ -z "$landing_pub_ip" ]]; then
+        _fail "未能获取到落地机公网 IPv4 地址，无法生成中继链接。"
+        echo
+        return 1
+    fi
+
     local relay_link=$(relay_build_link "$tuuid" "$landing_pub_ip" "$lport" "$enc")
     _step "中继导入链接:"
     echo
