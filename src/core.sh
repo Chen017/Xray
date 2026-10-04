@@ -755,7 +755,7 @@ rebuild_main_config() {
                     "port": $rstate.landing_port,
                     "id": $rstate.transport_uuid,
                     "encryption": $rstate.encryption,
-                    "flow": "xtls-rprx-vision-udp443"
+                    "flow": "xtls-rprx-vision"
                 },
                 "streamSettings": {
                     "network": "raw",
@@ -1022,7 +1022,7 @@ relay_build_link() {
     local l_ip="$2"
     local l_port="$3"
     local enc="$4"
-    echo "vless://${t_uuid}@${l_ip}:${l_port}?encryption=${enc}&security=none&type=tcp&flow=xtls-rprx-vision-udp443#Xray-Relay"
+    echo "vless://${t_uuid}@${l_ip}:${l_port}?encryption=${enc}&security=none&type=tcp&flow=xtls-rprx-vision#Xray-Relay"
 }
 
 relay_parse_link() {
@@ -1088,7 +1088,7 @@ relay_parse_link() {
     if [[ "$p_type" != "tcp" && "$p_type" != "raw" ]]; then
         return 1
     fi
-    if [[ "$p_flow" != "xtls-rprx-vision-udp443" ]]; then
+    if [[ "$p_flow" != "xtls-rprx-vision" ]]; then
         return 1
     fi
     if ! relay_validate_vless_encryption "$p_enc"; then
@@ -1573,7 +1573,7 @@ relay_setup_line() {
 
     _step "正在验证中继链接..."
     if ! relay_parse_link "$input_link"; then
-        _fail "中继链接不合法或参数校验失败（必须为 vless RAW + security:none + xtls-rprx-vision-udp443 + 合法 encryption 与 IPv4）"
+        _fail "中继链接不合法或参数校验失败（必须为 vless RAW + security:none + xtls-rprx-vision + 合法 encryption 与 IPv4）"
         return 1
     fi
     _ok "中继链接验证通过: 落地 $parsed_landing_ip:$parsed_landing_port"
@@ -1791,7 +1791,7 @@ relay_test() {
         "port": $landing_port,
         "id": "$transport_uuid",
         "encryption": "$encryption",
-        "flow": "xtls-rprx-vision-udp443"
+        "flow": "xtls-rprx-vision"
       },
       "streamSettings": {
         "network": "raw",
@@ -1823,7 +1823,7 @@ EOF
     if [[ "$exit_ip" == "$landing_ip" ]]; then
         _ok "完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
     elif [[ -n "$exit_ip" ]]; then
-        _warn "链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
+        warn "链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
     else
         _fail "完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
     fi

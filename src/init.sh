@@ -314,5 +314,21 @@ if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then
     done
 fi
 
+if [[ -f $is_relay_state_file ]] && command -v jq &>/dev/null; then
+    _r_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
+    if [[ "$_r_role" == "line" && -f $is_config_json ]]; then
+        _r_flow=$(jq -r '.outbounds[]? | select(.tag == "relay-out") | (.settings.flow // .settings.vnext[0]?.users[0]?.flow // empty)' "$is_config_json" 2>/dev/null)
+        if [[ "$_r_flow" == "xtls-rprx-vision-udp443" ]]; then
+            _r_rebuild_needed=1
+        fi
+    fi
+    unset _r_role _r_flow
+fi
+
 load core.sh
+if [[ $_r_rebuild_needed ]]; then
+    rebuild_main_config
+    manage restart &>/dev/null
+    unset _r_rebuild_needed
+fi
 is_main_menu
