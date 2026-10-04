@@ -261,6 +261,7 @@ fi
 
 check_dependencies
 is_config_json=$is_core_dir/config.json
+is_relay_state_file=$is_core_dir/relay.json
 
 # core ver
 is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
@@ -288,7 +289,7 @@ fi
 
 if [[ -d $is_conf_dir ]] && command -v jq &>/dev/null; then
     for conf in "$is_conf_dir"/*.json; do
-        [[ -f "$conf" && "$conf" != *"custom_rules.json" ]] || continue
+        [[ -f "$conf" && "$conf" != *"custom_rules.json" && "$conf" != *"99_relay_in.json" ]] || continue
         if grep -q "limitFallbackUpload\|tcpCongestion\|serverMaxHeaderBytes" "$conf" 2>/dev/null || grep -q '"noGRPCHeader": false' "$conf" 2>/dev/null || grep -q '""' "$conf" 2>/dev/null; then
             _temp_conf=$(mktemp)
             if jq '

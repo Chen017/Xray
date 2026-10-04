@@ -194,6 +194,14 @@ is_port_used() {
     _info "请执行: $(_yellow "${cmd} update -y; ${cmd} install net-tools -y") 来修复此问题"
 }
 
+# ─── list managed regular node configs (excludes 99_relay_in.json) ───
+list_managed_node_configs() {
+    local pattern="${1:-.json$}"
+    if [[ -d $is_conf_dir ]]; then
+        ls "$is_conf_dir" 2>/dev/null | grep -E -i "$pattern" | sed '/dynamic-port-.*-link/d' | grep -v '^99_relay_in\.json$'
+    fi
+}
+
 save_iptables() {
     if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
         iptables-save > /etc/iptables/rules.v4
@@ -322,6 +330,19 @@ create() {
         
         is_v6only_str=''
 
+        # Inject second client identity if line relay is active
+        local r_client_entry_v4=""
+        local r_client_entry_v6=""
+        local r_client_entry_xhttp=""
+        if [[ -f $is_relay_state_file ]] && [[ "$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)" == "line" ]]; then
+            local r_client_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file" 2>/dev/null)
+            if [[ -n "$r_client_uuid" ]]; then
+                r_client_entry_v4=",{\"id\":\"$r_client_uuid\",\"flow\":\"xtls-rprx-vision\",\"email\":\"relay-vision-v4\"}"
+                r_client_entry_v6=",{\"id\":\"$r_client_uuid\",\"flow\":\"xtls-rprx-vision\",\"email\":\"relay-vision-v6\"}"
+                r_client_entry_xhttp=",{\"id\":\"$r_client_uuid\",\"email\":\"relay-xhttp\"}"
+            fi
+        fi
+
         # generate config
         is_new_json=$(cat <<EOF
 {
@@ -337,7 +358,7 @@ create() {
                         "id": "$uuid",
                         "flow": "xtls-rprx-vision",
                         "email": "vision-v4"
-                    }
+                    }$r_client_entry_v4
                 ],
                 "decryption": "none",
                 "fallbacks": [
@@ -381,7 +402,7 @@ create() {
                         "id": "$uuid",
                         "flow": "xtls-rprx-vision",
                         "email": "vision-v6"
-                    }
+                    }$r_client_entry_v6
                 ],
                 "decryption": "none",
                 "fallbacks": [
@@ -424,7 +445,7 @@ create() {
                     {
                         "id": "$uuid",
                         "email": "xhttp-stream-up"
-                    }
+                    }$r_client_entry_xhttp
                 ],
                 "decryption": "none"
             },
@@ -571,6 +592,37 @@ EOF
     esac
 }
 
+# ─── relay state management ──────────────────────────────
+is_relay_state_file=${is_relay_state_file:-$is_core_dir/relay.json}
+
+relay_state_exists() {
+    [[ -f $is_relay_state_file ]]
+}
+
+relay_get_role() {
+    if relay_state_exists; then
+        jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null
+    fi
+}
+
+relay_load_state() {
+    if relay_state_exists; then
+        cat "$is_relay_state_file" 2>/dev/null
+    else
+        echo '{}'
+    fi
+}
+
+relay_save_state() {
+    local state_json="$1"
+    echo "$state_json" > "$is_relay_state_file"
+    chmod 600 "$is_relay_state_file"
+}
+
+relay_delete_state() {
+    rm -f "$is_relay_state_file"
+}
+
 # ─── custom routing rules management ─────────────────────
 is_custom_rules_file=$is_core_dir/custom_rules.json
 
@@ -669,39 +721,98 @@ rule_to_display() {
     echo "$display_type,$value → $action"
 }
 
-# apply custom rules into config.json (before base block rules)
-apply_custom_rules() {
-    [[ ! -f $is_config_json ]] && return
+# rebuild main config outbounds and routing rules idempotently
+rebuild_main_config() {
+    [[ ! -f $is_config_json ]] && return 1
     local rules_json=$(load_custom_rules)
+    local role=$(relay_get_role)
+    local relay_state=""
+    if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
+        relay_state=$(cat "$is_relay_state_file" 2>/dev/null)
+    fi
 
-    # Ensure direct-v4 and direct-v6 outbound entries exist (for existing installations)
-    local tmp_json=$(jq '
-        if (.outbounds | map(select(.tag == "direct-v4")) | length) == 0 then
+    # 1. Update outbounds:
+    # Ensure: direct (0), direct-v4, direct-v6, block, and if line: relay-out
+    local tmp_json=$(jq --arg role "$role" --argjson rstate "${relay_state:-null}" '
+        (if (.outbounds | length == 0) or (.outbounds[0].tag != "direct") then
+            .outbounds = ([{"protocol": "freedom", "tag": "direct", "settings": {"domainStrategy": "UseIPv4v6"}}] + (.outbounds | map(select(.tag != "direct"))))
+        else . end) |
+        (if (.outbounds | map(select(.tag == "direct-v4")) | length) == 0 then
             .outbounds += [{"protocol": "freedom", "tag": "direct-v4", "settings": {"domainStrategy": "UseIPv4"}}]
-        else . end |
-        if (.outbounds | map(select(.tag == "direct-v6")) | length) == 0 then
+        else . end) |
+        (if (.outbounds | map(select(.tag == "direct-v6")) | length) == 0 then
             .outbounds += [{"protocol": "freedom", "tag": "direct-v6", "settings": {"domainStrategy": "UseIPv6"}}]
-        else . end
-    ' $is_config_json)
-    [[ $? -eq 0 && -n "$tmp_json" ]] && echo "$tmp_json" > "$is_config_json"
+        else . end) |
+        (if (.outbounds | map(select(.tag == "block")) | length) == 0 then
+            .outbounds += [{"protocol": "blackhole", "tag": "block"}]
+        else . end) |
+        (if $role == "line" and $rstate != null then
+            (.outbounds | map(select(.tag != "relay-out"))) + [{
+                "tag": "relay-out",
+                "protocol": "vless",
+                "settings": {
+                    "address": $rstate.landing_ip,
+                    "port": $rstate.landing_port,
+                    "id": $rstate.transport_uuid,
+                    "encryption": $rstate.encryption,
+                    "flow": "xtls-rprx-vision-udp443"
+                },
+                "streamSettings": {
+                    "network": "raw",
+                    "security": "none",
+                    "sockopt": {
+                        "tcpFastOpen": true
+                    }
+                },
+                "mux": {
+                    "enabled": false
+                },
+                "targetStrategy": "AsIs"
+            }]
+        else
+            .outbounds | map(select(.tag != "relay-out"))
+        end) as $new_outbounds |
+        .outbounds = $new_outbounds
+    ' "$is_config_json")
+    [[ $? -eq 0 && -n "$tmp_json" ]] && echo "$tmp_json" > "$is_config_json" || return 1
 
-    # Rebuild routing.rules idempotently with custom rules + base block rules
-    local tmp_json=$(jq --argjson custom "$rules_json" '
-        .routing.rules = (
-            (if ($custom | type) == "array" then $custom else [] end) +
+    # 2. Update routing.rules:
+    # 1. relay user -> relay-out (if role == line)
+    # 2. custom rules
+    # 3. base block rules
+    tmp_json=$(jq --arg role "$role" --argjson custom "$rules_json" '
+        (if $role == "line" then
             [
-                {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},
-                {"type": "field", "ip": ["geoip:cn", "geoip:private"], "outboundTag": "block"},
-                {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
+                {
+                    "type": "field",
+                    "user": [
+                        "relay-vision-v4",
+                        "relay-vision-v6",
+                        "relay-xhttp"
+                    ],
+                    "outboundTag": "relay-out"
+                }
             ]
-        )
-    ' $is_config_json)
-
+        else [] end) as $relay_rules |
+        (if ($custom | type) == "array" then $custom else [] end) as $c_rules |
+        [
+            {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},
+            {"type": "field", "ip": ["geoip:cn", "geoip:private"], "outboundTag": "block"},
+            {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
+        ] as $base_blocks |
+        .routing.rules = ($relay_rules + $c_rules + $base_blocks)
+    ' "$is_config_json")
     if [[ $? -eq 0 && -n "$tmp_json" ]]; then
         echo "$tmp_json" > "$is_config_json"
     else
-        _fail "注入自定义规则失败"
+        _fail "更新配置路由规则失败"
+        return 1
     fi
+    return 0
+}
+
+apply_custom_rules() {
+    rebuild_main_config
 }
 
 manage_custom_rules() {
@@ -865,6 +976,929 @@ manage_custom_rules() {
             pause
             ;;
         esac
+    done
+}
+
+# ─── relay validation helpers ────────────────────────────
+relay_validate_ipv4() {
+    local ip="$1"
+    if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        return 1
+    fi
+    local IFS='.'
+    local -a octets=($ip)
+    for octet in "${octets[@]}"; do
+        if (( octet < 0 || octet > 255 )); then
+            return 1
+        fi
+    done
+    if [[ "$ip" == "0.0.0.0" || "$ip" == "255.255.255.255" || "$ip" =~ ^127\. ]]; then
+        return 1
+    fi
+    return 0
+}
+
+relay_validate_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
+}
+
+relay_validate_uuid() {
+    local uuid="$1"
+    [[ "$uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
+relay_validate_vless_encryption() {
+    local enc="$1"
+    [[ -n "$enc" && ${#enc} -ge 10 && "$enc" =~ ^[A-Za-z0-9+/=_:-]+$ ]]
+}
+
+# ─── relay uri builder & parser ──────────────────────────
+relay_build_link() {
+    local t_uuid="$1"
+    local l_ip="$2"
+    local l_port="$3"
+    local enc="$4"
+    echo "vless://${t_uuid}@${l_ip}:${l_port}?encryption=${enc}&security=none&type=tcp&flow=xtls-rprx-vision-udp443#Xray-Relay"
+}
+
+relay_parse_link() {
+    local link="$1"
+    parsed_transport_uuid=""
+    parsed_landing_ip=""
+    parsed_landing_port=""
+    parsed_encryption=""
+
+    if [[ "$link" != vless://* ]]; then
+        return 1
+    fi
+    local rest="${link#vless://}"
+    rest="${rest%%#*}"
+
+    if [[ "$rest" != *"@"* ]]; then
+        return 1
+    fi
+    local t_uuid="${rest%%@*}"
+    local host_and_query="${rest#*@}"
+
+    if [[ "$host_and_query" != *"?"* ]]; then
+        return 1
+    fi
+    local host_port="${host_and_query%%\?*}"
+    local query="${host_and_query#*\?}"
+
+    if [[ "$host_port" != *":"* ]]; then
+        return 1
+    fi
+    local l_ip="${host_port%%:*}"
+    local l_port="${host_port#*:}"
+
+    if ! relay_validate_uuid "$t_uuid"; then
+        return 1
+    fi
+    if ! relay_validate_ipv4 "$l_ip"; then
+        return 1
+    fi
+    if ! relay_validate_port "$l_port"; then
+        return 1
+    fi
+
+    local p_enc=""
+    local p_sec=""
+    local p_type=""
+    local p_flow=""
+    local IFS='&'
+    for param in $query; do
+        local key="${param%%=*}"
+        local val="${param#*=}"
+        case "$key" in
+        encryption) p_enc="$val" ;;
+        security) p_sec="$val" ;;
+        type) p_type="$val" ;;
+        flow) p_flow="$val" ;;
+        esac
+    done
+
+    if [[ "$p_sec" != "none" ]]; then
+        return 1
+    fi
+    if [[ "$p_type" != "tcp" && "$p_type" != "raw" ]]; then
+        return 1
+    fi
+    if [[ "$p_flow" != "xtls-rprx-vision-udp443" ]]; then
+        return 1
+    fi
+    if ! relay_validate_vless_encryption "$p_enc"; then
+        return 1
+    fi
+
+    parsed_transport_uuid="$t_uuid"
+    parsed_landing_ip="$l_ip"
+    parsed_landing_port="$l_port"
+    parsed_encryption="$p_enc"
+    return 0
+}
+
+# ─── relay generation helpers ────────────────────────────
+relay_get_random_port() {
+    local ssh_p=$(grep -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    [[ -z "$ssh_p" ]] && ssh_p=22
+    local existing_node_ports=""
+    if [[ -d $is_conf_dir ]]; then
+        existing_node_ports=$(jq -r '.inbounds[]?.port? // empty' "$is_conf_dir"/*.json 2>/dev/null | sort -u)
+    fi
+
+    local retry=0
+    while (( retry < 30 )); do
+        (( retry++ ))
+        local rand_p=""
+        if command -v shuf &>/dev/null; then
+            rand_p=$(shuf -i 20000-60000 -n 1 2>/dev/null)
+        else
+            rand_p=$(awk 'BEGIN{srand(); print int(20000 + rand() * 40001)}')
+        fi
+
+        [[ -z "$rand_p" ]] && continue
+        [[ "$rand_p" == "443" || "$rand_p" == "8443" || "$rand_p" == "$ssh_p" ]] && continue
+        if [[ -n "$existing_node_ports" ]] && echo "$existing_node_ports" | grep -qw "$rand_p"; then
+            continue
+        fi
+
+        local port_busy=0
+        if command -v ss &>/dev/null; then
+            if ss -tunlp 2>/dev/null | grep -qE ":${rand_p}[[:space:]]"; then
+                port_busy=1
+            fi
+        elif command -v netstat &>/dev/null; then
+            if netstat -tunlp 2>/dev/null | grep -qE ":${rand_p}[[:space:]]"; then
+                port_busy=1
+            fi
+        fi
+        if [[ $port_busy -eq 0 ]]; then
+            echo "$rand_p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+relay_generate_vlessenc() {
+    vlessenc_decryption=""
+    vlessenc_encryption=""
+
+    # 1. Try --json first
+    local json_out
+    json_out=$($is_core_bin vlessenc --json 2>/dev/null)
+    if [[ $? -eq 0 && -n "$json_out" ]] && echo "$json_out" | jq . &>/dev/null; then
+        local dec=$(echo "$json_out" | jq -r 'if type=="array" then ((.[] | select(.authentication=="X25519" or .type=="X25519") // .[0]) | .decryption // empty) else .decryption // empty end' 2>/dev/null)
+        local enc=$(echo "$json_out" | jq -r 'if type=="array" then ((.[] | select(.authentication=="X25519" or .type=="X25519") // .[0]) | .encryption // empty) else .encryption // empty end' 2>/dev/null)
+        if relay_validate_vless_encryption "$dec" && relay_validate_vless_encryption "$enc"; then
+            vlessenc_decryption="$dec"
+            vlessenc_encryption="$enc"
+            return 0
+        fi
+    fi
+
+    # 2. Text output
+    local txt_out
+    txt_out=$($is_core_bin vlessenc 2>/dev/null)
+    if [[ $? -ne 0 || -z "$txt_out" ]]; then
+        return 1
+    fi
+
+    local dec=""
+    local enc=""
+    dec=$(echo "$txt_out" | awk '
+        BEGIN{IGNORECASE=1}
+        /x25519/{x=1}
+        x && /decryption:/{sub(/^.*:[ \t]*/, ""); print; exit}
+    ' | tr -d '\r\n[:space:]')
+    enc=$(echo "$txt_out" | awk '
+        BEGIN{IGNORECASE=1}
+        /x25519/{x=1}
+        x && /encryption:/{sub(/^.*:[ \t]*/, ""); print; exit}
+    ' | tr -d '\r\n[:space:]')
+
+    if [[ -z "$dec" ]]; then
+        dec=$(echo "$txt_out" | awk 'BEGIN{IGNORECASE=1} /decryption:/{sub(/^.*:[ \t]*/, ""); print; exit}' | tr -d '\r\n[:space:]')
+    fi
+    if [[ -z "$enc" ]]; then
+        enc=$(echo "$txt_out" | awk 'BEGIN{IGNORECASE=1} /encryption:/{sub(/^.*:[ \t]*/, ""); print; exit}' | tr -d '\r\n[:space:]')
+    fi
+
+    if relay_validate_vless_encryption "$dec" && relay_validate_vless_encryption "$enc"; then
+        vlessenc_decryption="$dec"
+        vlessenc_encryption="$enc"
+        return 0
+    fi
+
+    return 1
+}
+
+# ─── relay firewall helpers ──────────────────────────────
+relay_open_firewall() {
+    local peer_ip="$1"
+    local port="$2"
+    [[ -z "$peer_ip" || -z "$port" ]] && return 1
+    relay_close_firewall "$peer_ip" "$port"
+    if command -v iptables &>/dev/null; then
+        iptables -I INPUT -p tcp -s "${peer_ip}/32" --dport "$port" -j ACCEPT &>/dev/null
+    fi
+    save_iptables
+}
+
+relay_close_firewall() {
+    local peer_ip="$1"
+    local port="$2"
+    [[ -z "$peer_ip" || -z "$port" ]] && return 1
+    if command -v iptables &>/dev/null; then
+        while iptables -D INPUT -p tcp -s "${peer_ip}/32" --dport "$port" -j ACCEPT &>/dev/null; do :; done
+    fi
+    save_iptables
+}
+
+# ─── relay config helpers ────────────────────────────────
+relay_create_landing_inbound() {
+    local transport_uuid="$1"
+    local decryption="$2"
+    local port="$3"
+    local target_file="$is_conf_dir/99_relay_in.json"
+
+    local json_content=$(cat <<EOF
+{
+  "inbounds": [
+    {
+      "tag": "relay-in",
+      "listen": "0.0.0.0",
+      "port": $port,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$transport_uuid",
+            "flow": "xtls-rprx-vision",
+            "email": "relay-transport"
+          }
+        ],
+        "decryption": "$decryption"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "none",
+        "sockopt": {
+          "tcpFastOpen": true
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
+      }
+    }
+  ]
+}
+EOF
+)
+    if ! echo "$json_content" | jq . &>/dev/null; then
+        _fail "生成的 99_relay_in.json 格式异常"
+        return 1
+    fi
+    echo "$json_content" > "$target_file"
+    chmod 600 "$target_file"
+    return 0
+}
+
+relay_remove_landing_inbound() {
+    rm -f "$is_conf_dir/99_relay_in.json"
+}
+
+relay_add_client_identity() {
+    local c_uuid="$1"
+    [[ -z "$c_uuid" ]] && return 1
+    for conf_name in $(list_managed_node_configs); do
+        local conf_path="$is_conf_dir/$conf_name"
+        [[ -f "$conf_path" ]] || continue
+        local updated=$(jq --arg r_uuid "$c_uuid" '
+            .inbounds |= map(
+                if (.tag | startswith("public_") and endswith("_v4")) then
+                    .settings.clients = (
+                        (.settings.clients | map(select(.email != "relay-vision-v4"))) +
+                        [{"id": $r_uuid, "flow": "xtls-rprx-vision", "email": "relay-vision-v4"}]
+                    )
+                elif (.tag | startswith("public_") and endswith("_v6")) then
+                    .settings.clients = (
+                        (.settings.clients | map(select(.email != "relay-vision-v6"))) +
+                        [{"id": $r_uuid, "flow": "xtls-rprx-vision", "email": "relay-vision-v6"}]
+                    )
+                elif (.tag == "local_xhttp_stream_up") then
+                    .settings.clients = (
+                        (.settings.clients | map(select(.email != "relay-xhttp"))) +
+                        [{"id": $r_uuid, "email": "relay-xhttp"}]
+                    )
+                else . end
+            )
+        ' "$conf_path" 2>/dev/null)
+        if [[ $? -eq 0 && -n "$updated" ]]; then
+            echo "$updated" > "$conf_path"
+        fi
+    done
+}
+
+relay_remove_client_identity() {
+    for conf_name in $(list_managed_node_configs); do
+        local conf_path="$is_conf_dir/$conf_name"
+        [[ -f "$conf_path" ]] || continue
+        local updated=$(jq '
+            .inbounds |= map(
+                if .settings.clients then
+                    .settings.clients |= map(select(
+                        .email != "relay-vision-v4" and
+                        .email != "relay-vision-v6" and
+                        .email != "relay-xhttp"
+                    ))
+                else . end
+            )
+        ' "$conf_path" 2>/dev/null)
+        if [[ $? -eq 0 && -n "$updated" ]]; then
+            echo "$updated" > "$conf_path"
+        fi
+    done
+}
+
+relay_ensure_line_outbound() {
+    rebuild_main_config
+}
+
+relay_remove_line_outbound() {
+    rebuild_main_config
+}
+
+# ─── relay transaction helpers ───────────────────────────
+relay_backup() {
+    relay_backup_dir=$(mktemp -d /tmp/xray_relay_bak_XXXXXX)
+    [[ -f $is_config_json ]] && cp -f "$is_config_json" "$relay_backup_dir/config.json"
+    [[ -f $is_relay_state_file ]] && cp -f "$is_relay_state_file" "$relay_backup_dir/relay.json"
+    if [[ -d $is_conf_dir ]]; then
+        mkdir -p "$relay_backup_dir/conf"
+        cp -rf "$is_conf_dir"/* "$relay_backup_dir/conf/" 2>/dev/null || true
+    fi
+}
+
+relay_restore() {
+    if [[ -n "$relay_backup_dir" && -d "$relay_backup_dir" ]]; then
+        _step "正在执行回滚恢复..."
+        [[ -f "$relay_backup_dir/config.json" ]] && cp -f "$relay_backup_dir/config.json" "$is_config_json"
+        if [[ -f "$relay_backup_dir/relay.json" ]]; then
+            cp -f "$relay_backup_dir/relay.json" "$is_relay_state_file"
+        else
+            rm -f "$is_relay_state_file"
+        fi
+        if [[ -d "$relay_backup_dir/conf" ]]; then
+            if [[ ! -f "$relay_backup_dir/conf/99_relay_in.json" ]]; then
+                rm -f "$is_conf_dir/99_relay_in.json"
+            fi
+            cp -rf "$relay_backup_dir/conf"/* "$is_conf_dir/" 2>/dev/null || true
+        fi
+        manage restart &>/dev/null
+        _ok "已恢复原配置"
+    fi
+    relay_cleanup_backup
+}
+
+relay_cleanup_backup() {
+    if [[ -n "$relay_backup_dir" && -d "$relay_backup_dir" ]]; then
+        rm -rf "$relay_backup_dir"
+        unset relay_backup_dir
+    fi
+}
+
+relay_validate_config() {
+    local test_out
+    test_out=$($is_core_bin run -test -config "$is_config_json" -confdir "$is_conf_dir" 2>&1)
+    if [[ $? -ne 0 ]]; then
+        _fail "Xray 配置校验失败:"
+        echo -e "${red}${test_out}${none}"
+        return 1
+    fi
+    return 0
+}
+
+relay_restart_safe() {
+    manage restart &>/dev/null
+    sleep 2
+    if [[ ! $(pgrep -f $is_core_bin) ]]; then
+        _fail "Xray 重启失败，进程未能正常启动"
+        return 1
+    fi
+    return 0
+}
+
+# ─── relay operations & menu ─────────────────────────────
+relay_setup_landing() {
+    echo
+    _section "配置本机为落地机"
+    
+    _step "正在检测 Xray VLESS Encryption 能力..."
+    if ! relay_generate_vlessenc; then
+        _fail "当前 Xray-core 不支持所需 VLESS Encryption，请先更新核心。"
+        return 1
+    fi
+    _ok "Xray VLESS Encryption 支持正常"
+
+    local managed_nodes=$(list_managed_node_configs)
+    if [[ -z "$managed_nodes" ]]; then
+        _fail "未检测到已配置的普通节点，请先创建节点后再配置中继。"
+        return 1
+    fi
+
+    echo
+    echo -e "  ${cyan}落地机将只接受指定线路机 IPv4 的中继连接。${none}"
+    prompt_input "请输入线路机 IPv4 地址" peer_ip
+    [[ -z "$peer_ip" ]] && return
+    if ! relay_validate_ipv4 "$peer_ip"; then
+        _fail "无效的 IPv4 地址: $peer_ip"
+        return 1
+    fi
+
+    _step "正在选择中继监听端口 (20000-60000) ..."
+    local relay_port=$(relay_get_random_port)
+    if [[ -z "$relay_port" ]]; then
+        _fail "无法找到可用的中继端口，配置已终止。"
+        return 1
+    fi
+    _ok "分配中继端口: $relay_port"
+
+    get_uuid
+    local transport_uuid="$tmp_uuid"
+    local dec="$vlessenc_decryption"
+    local enc="$vlessenc_encryption"
+
+    relay_backup
+
+    if ! relay_create_landing_inbound "$transport_uuid" "$dec" "$relay_port"; then
+        relay_restore
+        return 1
+    fi
+
+    local landing_state=$(jq -n \
+        --arg peer "$peer_ip" \
+        --argjson port "$relay_port" \
+        --arg tuuid "$transport_uuid" \
+        --arg dec "$dec" \
+        --arg enc "$enc" '{
+            "version": 1,
+            "role": "landing",
+            "peer_ip": $peer,
+            "listen_port": $port,
+            "transport_uuid": $tuuid,
+            "decryption": $dec,
+            "encryption": $enc
+        }')
+    relay_save_state "$landing_state"
+
+    _step "正在校验 Xray 配置..."
+    if ! relay_validate_config; then
+        relay_restore
+        return 1
+    fi
+
+    _step "正在配置防火墙规则 (仅允许 $peer_ip/32 -> $relay_port) ..."
+    relay_open_firewall "$peer_ip" "$relay_port"
+
+    _step "正在重启 Xray 服务..."
+    if ! relay_restart_safe; then
+        relay_close_firewall "$peer_ip" "$relay_port"
+        relay_restore
+        return 1
+    fi
+
+    relay_cleanup_backup
+
+    get_ip
+    local landing_pub_ip="${ip:-$peer_ip}"
+    local relay_link=$(relay_build_link "$transport_uuid" "$landing_pub_ip" "$relay_port" "$enc")
+
+    echo
+    _line
+    _ok "落地机中继配置成功！"
+    _line
+    echo
+    _kv "角色:" "落地机 (landing)"
+    _kv "线路机 IP:" "$peer_ip"
+    _kv "监听端口:" "$relay_port (TCP 仅放行 $peer_ip)"
+    echo
+    _step "请复制以下中继导入链接，并在【线路机】上选择导入:"
+    echo
+    _green "$relay_link"
+    echo
+    _line
+    _info "落地机原有的直连客户端节点保持不变，可继续独立使用。"
+    echo
+}
+
+relay_setup_line() {
+    echo
+    _section "配置本机为线路机"
+
+    _step "正在检测 Xray VLESS Encryption 能力..."
+    if ! relay_generate_vlessenc; then
+        _fail "当前 Xray-core 不支持所需 VLESS Encryption，请先更新核心。"
+        return 1
+    fi
+    _ok "Xray VLESS Encryption 支持正常"
+
+    local managed_nodes=$(list_managed_node_configs)
+    if [[ -z "$managed_nodes" ]]; then
+        _fail "未检测到已配置的普通节点，请先创建节点后再配置中继。"
+        return 1
+    fi
+
+    echo
+    echo -e "  ${cyan}请输入在落地机上生成的中继链接 (vless://...):${none}"
+    prompt_input "中继链接" input_link
+    [[ -z "$input_link" ]] && return
+
+    _step "正在验证中继链接..."
+    if ! relay_parse_link "$input_link"; then
+        _fail "中继链接不合法或参数校验失败（必须为 vless RAW + security:none + xtls-rprx-vision-udp443 + 合法 encryption 与 IPv4）"
+        return 1
+    fi
+    _ok "中继链接验证通过: 落地 $parsed_landing_ip:$parsed_landing_port"
+
+    get_uuid
+    local client_uuid="$tmp_uuid"
+
+    relay_backup
+
+    local line_state=$(jq -n \
+        --arg lip "$parsed_landing_ip" \
+        --argjson lport "$parsed_landing_port" \
+        --arg tuuid "$parsed_transport_uuid" \
+        --arg enc "$parsed_encryption" \
+        --arg cuuid "$client_uuid" '{
+            "version": 1,
+            "role": "line",
+            "landing_ip": $lip,
+            "landing_port": $lport,
+            "transport_uuid": $tuuid,
+            "encryption": $enc,
+            "client_uuid": $cuuid
+        }')
+    relay_save_state "$line_state"
+
+    relay_add_client_identity "$client_uuid"
+
+    if ! rebuild_main_config; then
+        relay_restore
+        return 1
+    fi
+
+    _step "正在校验 Xray 配置..."
+    if ! relay_validate_config; then
+        relay_restore
+        return 1
+    fi
+
+    _step "正在重启 Xray 服务..."
+    if ! relay_restart_safe; then
+        relay_restore
+        return 1
+    fi
+
+    relay_cleanup_backup
+
+    echo
+    _line
+    _ok "线路机中继配置成功！"
+    _line
+    echo
+    _kv "角色:" "线路机 (line)"
+    _kv "落地机地址:" "$parsed_landing_ip:$parsed_landing_port"
+    _kv "中继客户端UUID:" "$client_uuid"
+    echo
+    _info "已为主配置注入 relay-out 出站及 relay routing 优先规则（经落地流量跳过线路机分流阻断）。"
+    _info "您可以在主菜单【2. 查看客户端配置】中选择【经落地】生成落地节点配置。"
+    echo
+}
+
+relay_remove_line() {
+    echo
+    _section "解除线路机绑定"
+    if ! prompt_confirm "确认解除与当前落地机的绑定吗？" "n"; then
+        return
+    fi
+
+    relay_backup
+
+    relay_delete_state
+    relay_remove_client_identity
+    rebuild_main_config
+
+    if ! relay_validate_config; then
+        relay_restore
+        return 1
+    fi
+
+    if ! relay_restart_safe; then
+        relay_restore
+        return 1
+    fi
+
+    relay_cleanup_backup
+
+    echo
+    _line
+    _ok "已成功解除线路机绑定！"
+    _line
+    echo
+    _info "所有公网节点已恢复为仅本机直出模式，relay-out 与中继路由规则已清除。"
+    echo
+    echo -e "  ${yellow}【提示】本操作只修改当前 VPS。如需彻底解除关系，请在另一端（落地机）同步删除中继配置。${none}"
+    echo
+}
+
+relay_remove_landing() {
+    echo
+    _section "解除落地机配置"
+    if ! prompt_confirm "确认解除落地机中继配置吗？" "n"; then
+        return
+    fi
+
+    local peer_ip=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
+    local listen_port=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
+
+    relay_backup
+
+    relay_remove_landing_inbound
+    relay_delete_state
+
+    if ! relay_validate_config; then
+        relay_restore
+        return 1
+    fi
+
+    if [[ -n "$peer_ip" && -n "$listen_port" ]]; then
+        relay_close_firewall "$peer_ip" "$listen_port"
+    fi
+
+    if ! relay_restart_safe; then
+        relay_open_firewall "$peer_ip" "$listen_port"
+        relay_restore
+        return 1
+    fi
+
+    relay_cleanup_backup
+
+    echo
+    _line
+    _ok "已成功解除落地机中继配置！"
+    _line
+    echo
+    _info "已删除 99_relay_in.json 并关闭防火墙端口放行规则，本机直连节点保持正常工作。"
+    echo
+    echo -e "  ${yellow}【提示】本操作只修改当前 VPS。如需彻底解除关系，请在另一端（线路机）同步删除中继配置。${none}"
+    echo
+}
+
+relay_test() {
+    echo
+    _section "中继连通性测试"
+    local role=$(relay_get_role)
+    if [[ "$role" != "line" ]]; then
+        _fail "仅线路机支持执行连通测试"
+        return 1
+    fi
+    if [[ ! -f $is_relay_state_file ]]; then
+        _fail "未找到中继状态文件"
+        return 1
+    fi
+
+    local landing_ip=$(jq -r '.landing_ip // empty' "$is_relay_state_file")
+    local landing_port=$(jq -r '.landing_port // empty' "$is_relay_state_file")
+    local transport_uuid=$(jq -r '.transport_uuid // empty' "$is_relay_state_file")
+    local encryption=$(jq -r '.encryption // empty' "$is_relay_state_file")
+
+    _step "正在执行基础 TCP 连通性测试 (${landing_ip}:${landing_port}) ..."
+    local tcp_ok=0
+    if timeout 3 bash -c "echo > /dev/tcp/${landing_ip}/${landing_port}" &>/dev/null; then
+        tcp_ok=1
+    elif command -v nc &>/dev/null && nc -z -w 3 "$landing_ip" "$landing_port" &>/dev/null; then
+        tcp_ok=1
+    fi
+    if [[ $tcp_ok -eq 0 ]]; then
+        _fail "TCP 不可达 (${landing_ip}:${landing_port})"
+        _info "请检查落地机防火墙是否放行线路机 IP，或落地机 Xray 服务是否正在运行。"
+        return 1
+    fi
+    _ok "TCP 连接正常"
+
+    _step "正在执行完整链路端到端出口测试..."
+    local test_socks_port=$(awk 'BEGIN{srand(); print int(30000 + rand() * 20001)}')
+    local tmp_test_cfg="/tmp/relay_test_$$.json"
+
+    cat <<EOF >"$tmp_test_cfg"
+{
+  "log": {
+    "loglevel": "error"
+  },
+  "inbounds": [
+    {
+      "tag": "socks-test",
+      "listen": "127.0.0.1",
+      "port": $test_socks_port,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "relay-out",
+      "protocol": "vless",
+      "settings": {
+        "address": "$landing_ip",
+        "port": $landing_port,
+        "id": "$transport_uuid",
+        "encryption": "$encryption",
+        "flow": "xtls-rprx-vision-udp443"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "none",
+        "sockopt": {
+          "tcpFastOpen": true
+        }
+      },
+      "mux": {
+        "enabled": false
+      },
+      "targetStrategy": "AsIs"
+    }
+  ]
+}
+EOF
+
+    $is_core_bin run -c "$tmp_test_cfg" &>/dev/null &
+    local test_pid=$!
+    sleep 2
+
+    local exit_ip=""
+    exit_ip=$(curl -s --socks5 "127.0.0.1:$test_socks_port" --max-time 6 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+
+    kill $test_pid &>/dev/null
+    wait $test_pid 2>/dev/null
+    rm -f "$tmp_test_cfg"
+
+    if [[ "$exit_ip" == "$landing_ip" ]]; then
+        _ok "完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
+    elif [[ -n "$exit_ip" ]]; then
+        _warn "链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
+    else
+        _fail "完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
+    fi
+}
+
+relay_view_info_line() {
+    echo
+    _section "线路机中继信息"
+    if [[ ! -f $is_relay_state_file ]]; then
+        _fail "未找到中继状态文件"
+        return 1
+    fi
+    local lip=$(jq -r '.landing_ip // ""' "$is_relay_state_file")
+    local lport=$(jq -r '.landing_port // ""' "$is_relay_state_file")
+    local tuuid=$(jq -r '.transport_uuid // ""' "$is_relay_state_file")
+    local enc=$(jq -r '.encryption // ""' "$is_relay_state_file")
+    local cuuid=$(jq -r '.client_uuid // ""' "$is_relay_state_file")
+
+    _kv "角色:" "线路机 (line)"
+    _kv "落地 IP:" "$lip"
+    _kv "落地端口:" "$lport"
+    _kv "中继传输 UUID:" "$tuuid"
+    _kv "客户端专用 UUID:" "$cuuid"
+    echo
+    _kv "加密参数:" "$enc"
+    echo
+}
+
+relay_view_info_landing() {
+    echo
+    _section "落地机中继信息"
+    if [[ ! -f $is_relay_state_file ]]; then
+        _fail "未找到中继状态文件"
+        return 1
+    fi
+    local pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file")
+    local lport=$(jq -r '.listen_port // ""' "$is_relay_state_file")
+    local tuuid=$(jq -r '.transport_uuid // ""' "$is_relay_state_file")
+    local dec=$(jq -r '.decryption // ""' "$is_relay_state_file")
+    local enc=$(jq -r '.encryption // ""' "$is_relay_state_file")
+
+    _kv "角色:" "落地机 (landing)"
+    _kv "放行线路 IP:" "$pip"
+    _kv "监听端口:" "$lport"
+    _kv "中继传输 UUID:" "$tuuid"
+    echo
+    _kv "落地解密参数:" "$dec"
+    _kv "线路加密参数:" "$enc"
+    echo
+    get_ip
+    local landing_pub_ip="${ip:-$pip}"
+    local relay_link=$(relay_build_link "$tuuid" "$landing_pub_ip" "$lport" "$enc")
+    _step "中继导入链接:"
+    echo
+    _green "$relay_link"
+    echo
+}
+
+relay_menu() {
+    while :; do
+        clear
+        echo
+        _line
+        echo -e "  ${bold}${cyan}线路 / 落地互联${none}  ${gray}|${none}  ${is_core_status}"
+        _line
+        
+        local role=$(relay_get_role)
+        if [[ -z "$role" ]]; then
+            echo -e "  ${cyan}中继状态:${none} ${gray}未配置${none}"
+            echo
+            _section "操作"
+            _menu 1 "将本机配置为线路机"
+            _menu 2 "将本机配置为落地机"
+            echo
+            echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回主菜单${none}]: "
+            read REPLY
+            [[ "$REPLY" == "0" ]] && return
+            case $REPLY in
+            1)
+                relay_setup_line
+                pause
+                ;;
+            2)
+                relay_setup_landing
+                pause
+                ;;
+            esac
+        elif [[ "$role" == "line" ]]; then
+            local r_lip=$(jq -r '.landing_ip // ""' "$is_relay_state_file" 2>/dev/null)
+            local r_lport=$(jq -r '.landing_port // ""' "$is_relay_state_file" 2>/dev/null)
+            echo -e "  ${cyan}角色:${none} ${green}线路机${none}"
+            echo -e "  ${cyan}落地:${none} ${green}${r_lip}:${r_lport}${none}"
+            echo
+            _section "操作"
+            _menu 1 "查看落地信息"
+            _menu 2 "测试落地"
+            _menu 3 "解除线路绑定"
+            echo
+            echo -ne "  请选择 [${green}1-3${none}] [${red}0 返回主菜单${none}]: "
+            read REPLY
+            [[ "$REPLY" == "0" ]] && return
+            case $REPLY in
+            1)
+                relay_view_info_line
+                pause
+                ;;
+            2)
+                relay_test
+                pause
+                ;;
+            3)
+                relay_remove_line
+                pause
+                ;;
+            esac
+        elif [[ "$role" == "landing" ]]; then
+            local r_pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file" 2>/dev/null)
+            local r_lport=$(jq -r '.listen_port // ""' "$is_relay_state_file" 2>/dev/null)
+            echo -e "  ${cyan}角色:${none} ${green}落地机${none}"
+            echo -e "  ${cyan}线路:${none} ${green}${r_pip}${none}"
+            echo -e "  ${cyan}监听:${none} ${green}${r_lport}${none}"
+            echo
+            _section "操作"
+            _menu 1 "查看 / 复制中继链接"
+            _menu 2 "解除落地配置"
+            echo
+            echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回主菜单${none}]: "
+            read REPLY
+            [[ "$REPLY" == "0" ]] && return
+            case $REPLY in
+            1)
+                relay_view_info_landing
+                pause
+                ;;
+            2)
+                relay_remove_landing
+                pause
+                ;;
+            esac
+        fi
     done
 }
 
@@ -1055,7 +2089,7 @@ del() {
         [[ $is_api_fail && ! $is_new_json ]] && manage restart &
         [[ ! $is_no_del_msg ]] && _ok "已删除: $is_config_file"
     fi
-    if [[ ! $(ls $is_conf_dir | grep .json) && ! $is_change ]]; then
+    if [[ ! $(list_managed_node_configs) && ! $is_change ]]; then
         warn "当前配置目录为空! 因为你刚刚删除了最后一个配置文件"
         is_conf_dir_empty=1
     fi
@@ -1072,10 +2106,23 @@ uninstall() {
     _step "正在停止 $is_core_name 服务..."
     manage stop &>/dev/null
     manage disable &>/dev/null
+
+    # Close relay firewall if role == landing
+    if [[ -f $is_relay_state_file ]]; then
+        local r_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
+        if [[ "$r_role" == "landing" ]]; then
+            local r_peer=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
+            local r_port=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
+            if [[ -n "$r_peer" && -n "$r_port" ]]; then
+                relay_close_firewall "$r_peer" "$r_port"
+                _ok "已关闭中继防火墙端口: $r_peer -> $r_port"
+            fi
+        fi
+    fi
     
     # Close all opened ports before deleting config
     if [[ -d $is_conf_dir ]]; then
-        for v in $(ls $is_conf_dir | grep .json$ | sed '/dynamic-port-.*-link/d'); do
+        for v in $(list_managed_node_configs); do
             local p=$(jq -r '.inbounds[0].port' $is_conf_dir/"$v")
             if [[ $(is_test port $p) ]]; then
                 close_port $p
@@ -1269,8 +2316,7 @@ get() {
     file)
         is_file_str=$2
         [[ ! $is_file_str ]] && is_file_str='.json$'
-        # is_all_json=("$(ls $is_conf_dir | grep -E $is_file_str)")
-        readarray -t is_all_json <<<"$(ls $is_conf_dir | grep -E -i "$is_file_str" | sed '/dynamic-port-.*-link/d' | head -233)" # limit max 233 lines for show.
+        readarray -t is_all_json <<<"$(list_managed_node_configs "$is_file_str" | head -233)" # limit max 233 lines for show.
         [[ ${#is_all_json[@]} -eq 1 && -z "${is_all_json[0]}" ]] && unset is_all_json
         [[ ! $is_all_json ]] && err "无法找到相关的配置文件: $2"
         [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=${is_all_json[0]} && is_auto_get_config=1
@@ -1364,14 +2410,32 @@ info() {
     get addr
     is_color=41
 
+    # Check relay role and prompt outbound choice if line VPS
+    local active_uuid=$uuid
+    local outbound_mode="direct"
+    local role=$(relay_get_role)
+    if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
+        local r_landing_ip=$(jq -r '.landing_ip // empty' "$is_relay_state_file" 2>/dev/null)
+        local r_client_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file" 2>/dev/null)
+        if [[ -n "$r_landing_ip" && -n "$r_client_uuid" ]]; then
+            echo
+            ask list is_outbound_choice "本机直出 经落地(${r_landing_ip})" "\n  请选择出口:"
+            [[ $REPLY == "0" ]] && return
+            if [[ $REPLY == 2 ]]; then
+                active_uuid=$r_client_uuid
+                outbound_mode="landing"
+            fi
+        fi
+    fi
+
     # get active shortId (v4 uses [0], v6 uses [1] to ensure different SIDs in split mode)
     is_v4_sid=$(jq -r '.[0] // ""' <<<$v4_short_ids)
     [[ "$is_v4_sid" == "null" ]] && is_v4_sid=""
     is_v6_sid=$(jq -r '.[1] // .[0] // ""' <<<$v6_short_ids)
     [[ "$is_v6_sid" == "null" ]] && is_v6_sid=""
     
-    v4_url="$is_protocol://$uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v4_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v4_sid}#233boy-v4-$is_addr"
-    v6_url="$is_protocol://$uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v6_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v6_sid}#233boy-v6-$is_addr"
+    v4_url="$is_protocol://$active_uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v4_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v4_sid}#233boy-v4-$is_addr"
+    v6_url="$is_protocol://$active_uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v6_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v6_sid}#233boy-v6-$is_addr"
 
     get_ipv6
     v6_ip=${ipv6:-""}
@@ -1440,13 +2504,20 @@ info() {
 
     if [[ $is_deploy_mode == "XHTTP双栈分离" ]]; then
         # ── XHTTP split mode ──
+        local split_name="${is_config_name} (XHTTP-Split)"
+        local split_tag="Premium-Split"
+        if [[ "$outbound_mode" == "landing" ]]; then
+            split_name="${is_config_name} (XHTTP-Split-Landing)"
+            split_tag="Premium-Split-Landing"
+        fi
+
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: ${is_config_name} (XHTTP-Split)
+- name: $split_name
   type: vless
   server: "$uplink_ip"
   port: $port
-  uuid: $uuid
+  uuid: $active_uuid
   network: xhttp
   tls: true
   udp: true
@@ -1525,7 +2596,7 @@ EOF
             local server_addr="$uplink_ip"
             [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
             local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_split="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#Premium-Split"
+            local vless_link_split="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#${split_tag}"
             
             echo
             _step "VLESS 分享链接 (XHTTP 分离):"
@@ -1534,13 +2605,20 @@ EOF
         fi
     elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
         # ── XHTTP single mode ──
+        local single_name="${is_config_name} (XHTTP-Single)"
+        local single_tag="Premium-Single"
+        if [[ "$outbound_mode" == "landing" ]]; then
+            single_name="${is_config_name} (XHTTP-Single-Landing)"
+            single_tag="Premium-Single-Landing"
+        fi
+
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: ${is_config_name} (XHTTP-Single)
+- name: $single_name
   type: vless
   server: "$single_ip"
   port: $port
-  uuid: $uuid
+  uuid: $active_uuid
   network: xhttp
   tls: true
   udp: true
@@ -1587,7 +2665,7 @@ EOF
             local server_addr="$single_ip"
             [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
             local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_single="vless://${uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#Premium-Single"
+            local vless_link_single="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#${single_tag}"
             
             echo
             _step "VLESS 分享链接 (XHTTP 单栈):"
@@ -1596,13 +2674,20 @@ EOF
         fi
     else
         # ── Vision Reality only mode ──
+        local vision_name="Vision-Reality"
+        local vision_tag="Premium"
+        if [[ "$outbound_mode" == "landing" ]]; then
+            vision_name="Vision-Reality-Landing"
+            vision_tag="Premium-Landing"
+        fi
+
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: Vision-Reality
+- name: $vision_name
   type: vless
   server: "$vision_ip"
   port: $port
-  uuid: $uuid
+  uuid: $active_uuid
   network: tcp
   tls: true
   udp: true
@@ -1623,7 +2708,7 @@ EOF
 EOF
         else
             # generate Vision Reality VLESS link
-            local vless_link="vless://${uuid}@${vision_addr}:${port}?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${vision_sni}&fp=chrome&pbk=${is_public_key}&sid=${vision_sid}#Premium"
+            local vless_link="vless://${active_uuid}@${vision_addr}:${port}?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${vision_sni}&fp=chrome&pbk=${is_public_key}&sid=${vision_sid}#${vision_tag}"
             
             echo
             _step "VLESS 分享链接 (Vision Reality):"
@@ -1706,6 +2791,7 @@ _reset_state() {
     unset host is_conf_dir_empty
     unset is_api_fail is_run_fail is_no_manage_msg
     unset is_core_stop
+    unset _ov_relay_status _ov_relay_role _ov_relay_warn
 
     # re-check core status
     if [[ $(pgrep -f $is_core_bin) ]]; then
@@ -1863,7 +2949,7 @@ _get_overview() {
 
     # parse first config file
     if [[ -d $is_conf_dir ]]; then
-        local first_json=$(ls $is_conf_dir 2>/dev/null | grep '.json$' | sed '/dynamic-port-.*-link/d' | head -1)
+        local first_json=$(list_managed_node_configs | head -1)
         if [[ $first_json && -f $is_conf_dir/$first_json ]]; then
             local json_str=$(cat $is_conf_dir/$first_json)
             _ov_port=$(jq -r '.inbounds[0].port // ""' <<<$json_str 2>/dev/null)
@@ -1928,6 +3014,35 @@ _get_overview() {
             }' | sort -nu | xargs echo | sed 's/ /, /g')
     fi
     [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
+
+    # relay status
+    _ov_relay_status=""
+    _ov_relay_role=""
+    _ov_relay_warn=""
+    if [[ -f $is_relay_state_file ]]; then
+        _ov_relay_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
+        if [[ "$_ov_relay_role" == "line" ]]; then
+            local r_lip=$(jq -r '.landing_ip // empty' "$is_relay_state_file" 2>/dev/null)
+            local r_lport=$(jq -r '.landing_port // empty' "$is_relay_state_file" 2>/dev/null)
+            _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${r_lip}:${r_lport}${none}"
+
+            local has_out=$(jq -r '.outbounds[]? | select(.tag == "relay-out") | .tag' "$is_config_json" 2>/dev/null)
+            local has_rule=$(jq -r '.routing.rules[]? | select(.outboundTag == "relay-out") | .outboundTag' "$is_config_json" 2>/dev/null)
+            local has_client=$(jq -r '.inbounds[]?.settings?.clients[]? | select(.email == "relay-vision-v4") | .email' "$is_conf_dir"/*.json 2>/dev/null | head -1)
+            if [[ -z "$has_out" || -z "$has_rule" || -z "$has_client" ]]; then
+                _ov_relay_warn="  [警告] 中继配置状态异常 (线路机配置缺失组件)，请在菜单中检查！\n"
+            fi
+        elif [[ "$_ov_relay_role" == "landing" ]]; then
+            local r_pip=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
+            local r_lport=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
+            _ov_relay_status="${cyan}[中继]${none} 落地 ← ${green}${r_pip}${none}   端口: ${green}${r_lport}${none}"
+
+            if [[ ! -f "$is_conf_dir/99_relay_in.json" ]]; then
+                _ov_relay_warn="  [警告] 中继配置状态异常 (落地机缺少 99_relay_in.json)，请在菜单中检查！\n"
+            fi
+        fi
+    fi
+    [[ -z "$_ov_relay_status" ]] && _ov_relay_status="${cyan}[中继]${none} ${gray}未配置${none}"
     
     _check_sni_status
 }
@@ -2031,6 +3146,7 @@ is_main_menu() {
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status$_ov_v6_cdn_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  $_ov_relay_status"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi
@@ -2041,23 +3157,25 @@ is_main_menu() {
         _menu 1 "更改配置"
         _menu 2 "查看客户端配置"
         _menu 3 "查看完整服务端配置"
+        _menu 4 "线路 / 落地互联"
 
         _section "运行控制"
-        _menu 4 "启动 / 停止 / 重启"
-        _menu 5 "查看运行状态"
+        _menu 5 "启动 / 停止 / 重启"
+        _menu 6 "查看运行状态"
 
         _section "杂项"
-        _menu 6 "杂项管理 (包含日志/更新等)"
+        _menu 7 "杂项管理 (包含日志/更新等)"
 
-        if [[ $_ov_ip_warning || $_ov_sni_warning || $_ov_cdn_warning ]]; then
+        if [[ $_ov_ip_warning || $_ov_sni_warning || $_ov_cdn_warning || $_ov_relay_warn ]]; then
             echo
             [[ $_ov_ip_warning ]] && echo -ne "${red}${_ov_ip_warning}${none}"
             [[ $_ov_sni_warning ]] && echo -ne "${red}${_ov_sni_warning}${none}"
             [[ $_ov_cdn_warning ]] && echo -ne "${red}${_ov_cdn_warning}${none}"
+            [[ $_ov_relay_warn ]] && echo -ne "${red}${_ov_relay_warn}${none}"
         fi
 
         echo
-        echo -ne "  请选择 [${green}1-6${none}] [${red}0 退出${none}]: "
+        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
         read REPLY
         [[ "$REPLY" == "0" ]] && exit 0
         case $REPLY in
@@ -2091,6 +3209,9 @@ is_main_menu() {
             pause
             ;;
         4)
+            relay_menu
+            ;;
+        5)
             echo
             ask list is_do_manage "启动 停止 重启"
             [[ $REPLY == "0" ]] && continue
@@ -2098,13 +3219,13 @@ is_main_menu() {
             _ok "执行操作: $is_do_manage"
             sleep 2
             ;;
-        5)
+        6)
             echo
             systemctl status $is_core -l --no-pager
             echo
             pause
             ;;
-        6)
+        7)
             misc_menu
             ;;
         esac
