@@ -1248,7 +1248,7 @@ change() {
     # show current outbound strategy in menu
     local _cur_out_strategy
     _cur_out_strategy=$(outbound_strategy)
-    change_list[10]="修改出站解析 / 双栈连接竞速"
+    change_list[10]="切换出站 IP 优先 (当前: $(outbound_label "$_cur_out_strategy"))"
 
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {

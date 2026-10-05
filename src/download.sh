@@ -5,7 +5,8 @@ get_latest_version() {
     [[ $1 != sh ]] || repo="$is_sh_repo"
     response=$(curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 \
         "https://api.github.com/repos/$repo/releases/latest") || return 1
-    latest_ver=$(jq -er '.tag_name | select(type == "string" and test("^v[0-9]+(\\.[0-9]+){2}$"))' <<< "$response")
+    latest_ver=$(jq -er 'select(.prerelease == false and .draft == false) |
+        .tag_name | select(type == "string" and test("^v[0-9]+(\\.[0-9]+){2}$"))' <<< "$response")
 }
 
 safe_update() (

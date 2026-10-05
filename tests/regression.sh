@@ -152,6 +152,20 @@ _get_overview
 pass 'homepage has no external network dependency; failed DNS is not marked safe'
 unset -f curl dig
 
+# The restored terminal layout keeps the original sections, labels and rich overview.
+menu_output="$scratch/homepage.txt"
+clear() { :; }
+is_core_name=Xray
+is_core_ver=26.3.27
+is_sh_ver=v2.6.1
+is_main_menu <<< 0 > "$menu_output"
+for label in '[基础]' '[UUID]' '[ v4 ]' '[ v6 ]' '[高级]' '[状态]' 节点管理 运行控制 杂项 '查看客户端配置' '查看运行状态'; do
+    check grep -Fq "$label" "$menu_output"
+done
+check test "$_ov_uuid" = "$(jq -r '.inbounds[0].settings.clients[0].id' "$is_conf_dir/VLESS-REALITY-443.json")"
+unset -f clear
+pass 'original terminal overview, sections, numbering and exit behavior are restored'
+
 # Cached diagnostics must be scoped to the domain and address family.
 calls="$TEST_STATE/curl.calls"
 curl() {
@@ -168,6 +182,17 @@ diagnose_sni example.org 4 >/dev/null
 check test "$count" -lt "$(wc -l < "$calls")"
 pass 'diagnostic cache invalidates when the SNI changes'
 unset -f curl dig
+
+release_fixture='{"tag_name":"v26.3.27","prerelease":false,"draft":false}'
+curl() { printf '%s\n' "$release_fixture"; }
+check get_latest_version core
+check test "$latest_ver" = v26.3.27
+release_fixture='{"tag_name":"v26.9.9","prerelease":true,"draft":false}'
+if get_latest_version core; then echo 'FAIL: prerelease accepted as stable'; exit 1; fi
+release_fixture='{"tag_name":"v26.9.9","prerelease":false,"draft":true}'
+if get_latest_version core; then echo 'FAIL: draft accepted as stable'; exit 1; fi
+unset -f curl
+pass 'stable updater rejects prereleases and drafts'
 
 fetch_file() { return 22; }
 before=$(configuration_content "$is_core_dir")
@@ -257,14 +282,14 @@ echo 'is_sh_ver=v2.5.4' > "$is_sh_dir/xray.sh"
 echo 'external patch sentinel' > "$is_sh_dir/ipquality_patch.sh"
 ln -s "$is_sh_dir/xray.sh" "$is_sh_bin"
 script_fixture=bad-sh.zip
-if safe_update sh v2.6.0; then echo 'FAIL: invalid script accepted'; exit 1; fi
+if safe_update sh v2.6.1; then echo 'FAIL: invalid script accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=incomplete-sh.zip
-if safe_update sh v2.6.0; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
+if safe_update sh v2.6.1; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=sh.zip
-check safe_update sh v2.6.0
-check grep -q v2.6.0 "$is_sh_dir/xray.sh"
+check safe_update sh v2.6.1
+check grep -q v2.6.1 "$is_sh_dir/xray.sh"
 check grep -q 'external patch sentinel' "$is_sh_dir/ipquality_patch.sh"
 check grep -q v2.5.4 "$is_core_dir/.previous/sh/xray.sh"
 pass 'script update rejects bad syntax, keeps previous scripts and preserves external patch files'

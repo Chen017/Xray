@@ -9,25 +9,6 @@ choose_outbound_strategy() {
     config_transaction set_outbound_strategy "${strategies[$REPLY-1]}"
 }
 
-route_menu() {
-    local choice
-    while :; do
-        _section "路由与分流"
-        _menu 1 管理自定义规则
-        _menu 2 设置出站IP策略
-        _menu 3 切换客户端双栈分离方向
-        prompt_input "选择操作（0 返回）" choice
-        [[ $choice != 0 && -n $choice ]] || return
-        case "$choice" in
-            1) manage_custom_rules ;;
-            2) choose_outbound_strategy ;;
-            3) config_transaction toggle_route_mode ;;
-            *) _fail "无效操作" ;;
-        esac
-        pause
-    done
-}
-
 toggle_route_mode() {
     if [[ -f "$is_conf_dir/is_v6_uplink" ]]; then
         rm -f "$is_conf_dir/is_v6_uplink"
@@ -71,25 +52,35 @@ manage_custom_rules() {
     local rules count choice index destination entry field value tag
     while :; do
         clear
-        _section "自定义路由规则（按列表顺序匹配）"
+        echo
+        _line
+        echo -e "  ${bold}${cyan}自定义分流规则管理${none}"
+        _line
         rules=$(load_custom_rules)
         count=$(jq -er 'if type == "array" then length else error("invalid rules") end' <<< "$rules") || return 1
+        if (( count )); then
+            echo -e "  ${cyan}当前自定义规则 ($count 条):${none}"
+            echo
+        fi
         index=1
         while IFS= read -r entry; do
             [[ -n "$entry" ]] || continue
             IFS=$'\t' read -r field value tag < <(jq -r '[
                 (if .domain then "domain" elif .ip then "ip" else "protocol" end),
                 (.domain[0] // .ip[0] // .protocol[0] // ""), .outboundTag] | @tsv' <<< "$entry")
-            printf '  %s. %s\n' "$index" "$(rule_to_display "$field" "$value" "$tag")"
+            printf "  ${green}%2s)${none} %s\n" "$index" "$(rule_to_display "$field" "$value" "$tag")"
             ((index+=1))
         done < <(jq -c '.[]' <<< "$rules")
-        (( count )) || _info "暂无自定义规则"
-        _info "线路机的中继用户规则在这些规则之前；默认阻断规则在其后。"
+        (( count )) || echo -e "  ${gray}暂无自定义规则${none}"
+        echo
+        _section "操作"
         _menu 1 添加规则
-        _menu 2 修改规则
-        _menu 3 删除规则
+        _menu 2 删除规则
+        _menu 3 修改规则
         _menu 4 调整规则顺序
-        prompt_input "选择操作（0 返回）" choice
+        echo
+        echo -ne "  请选择 [${green}1-4${none}] [${red}0 返回${none}]: "
+        read -r choice || return
         [[ $choice != 0 && -n $choice ]] || return
         case "$choice" in
             1)
@@ -102,8 +93,8 @@ manage_custom_rules() {
                 [[ $index =~ ^[1-9][0-9]*$ ]] && (( index <= count )) || { _fail "无效序号"; pause; continue; }
                 ((index-=1))
                 case "$choice" in
-                    2) if prompt_rule; then config_transaction rules_apply edit "$index" "$prompted_rule"; fi ;;
-                    3) config_transaction rules_apply delete "$index" ;;
+                    2) config_transaction rules_apply delete "$index" ;;
+                    3) if prompt_rule; then config_transaction rules_apply edit "$index" "$prompted_rule"; fi ;;
                     4)
                         prompt_input "移动到第几条（1-$count，0 返回）" destination
                         [[ $destination != 0 ]] || continue
@@ -144,10 +135,13 @@ relay_apply_remove() {
 
 relay_setup_landing() {
     local peer landing_ip port transport_uuid
+    echo
     _section "配置本机为落地机"
     command -v iptables >/dev/null || { _fail "请先安装 iptables，以限制中继来源 IP"; return 1; }
     relay_generate_vlessenc || { _fail "内核不支持所需的 VLESS Encryption，请先更新"; return 1; }
-    prompt_input "线路机公网 IPv4（0 返回）" peer
+    echo
+    echo -e "  ${cyan}落地机将只接受指定线路机 IPv4 的中继连接。${none}"
+    prompt_input "请输入线路机 IPv4 地址" peer
     [[ $peer != 0 ]] || return
     relay_validate_ipv4 "$peer" || { _fail "无效的线路机 IPv4"; return 1; }
     get_ip || return 1
@@ -168,9 +162,12 @@ relay_setup_landing() {
 
 relay_setup_line() {
     local input
+    echo
     _section "配置本机为线路机"
     relay_generate_vlessenc || { _fail "内核不支持所需的 VLESS Encryption，请先更新"; return 1; }
-    prompt_input "落地机中继链接（0 返回）" input
+    echo
+    echo -e "  ${cyan}请输入在落地机上生成的中继链接 (vless://...):${none}"
+    prompt_input "中继链接" input
     [[ $input != 0 ]] || return
     relay_parse_link "$input" || { _fail "链接需要合法 IPv4、VLESS 加密及 RAW/Vision 参数"; return 1; }
     get_uuid
@@ -180,10 +177,14 @@ relay_setup_line() {
 }
 
 relay_remove_line() {
-    prompt_confirm "解除当前线路绑定？" n || return
+    echo
+    _section "解除线路机绑定"
+    prompt_confirm "确认解除与当前落地机的绑定吗？" n || return
     config_transaction relay_apply_remove line
 }
 relay_remove_landing() {
-    prompt_confirm "移除当前落地中继？" n || return
+    echo
+    _section "解除落地机配置"
+    prompt_confirm "确认解除落地机中继配置吗？" n || return
     config_transaction relay_apply_remove landing
 }

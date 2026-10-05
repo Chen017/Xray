@@ -118,15 +118,15 @@ info() {
     sid4=$(jq -r '.[0] // ""' <<< "$v4_short_ids")
     sid6=$(jq -r '.[1] // .[0] // ""' <<< "$v6_short_ids")
     if [[ $(relay_get_role) == line ]]; then
-        ask list outlet "本机直出 经落地" "\n  请选择出口:"
+        ask list outlet "本机直出 经落地($(jq -r .landing_ip "$is_relay_state_file"))" "\n  请选择出口:"
         [[ $REPLY != 0 ]] || return
         if [[ $REPLY == 2 ]]; then
             active_uuid=$(jq -er '.client_uuid' "$is_relay_state_file") || return 1
             outbound_mode=landing
         fi
     fi
-    _info "连接方案只影响本次导出，服务端同时支持 Vision 与 XHTTP。"
-    ask list scheme "XHTTP双栈分离 XHTTP单栈 VisionReality" "\n  请选择客户端连接方案:"
+    echo
+    ask list scheme "XHTTP双栈分离 XHTTP单栈 仅VisionReality" "\n  请选择部署模式:"
     [[ $REPLY != 0 ]] || return
     case "$REPLY" in 1) mode=split ;; 2) mode=single ;; 3) mode=vision ;; esac
     if [[ $mode == split ]]; then
@@ -138,16 +138,15 @@ info() {
             down_ip=$v4_ip; down_sni=$v4_sni; down_sid=$sid4
         fi
     else
-        ask list family "IPv4 IPv6" "\n  请选择连接地址:"
+        ask list family "v4-SNI($v4_sni) v6-SNI($v6_sni)" "\n  请选择 SNI:"
         [[ $REPLY != 0 ]] || return
         if [[ $REPLY == 1 ]]; then up_ip=$v4_ip; up_sni=$v4_sni; up_sid=$sid4
         else up_ip=$v6_ip; up_sni=$v6_sni; up_sid=$sid6; fi
         [[ -n "$up_ip" ]] || { _fail "未获取到所选地址，请使用另一栈或检查公网地址"; return 1; }
     fi
-    ask list format "Mihomo节点片段 VLESS分享链接" "\n  请选择输出格式:"
+    ask list format "Mihomo配置 VLESS链接" "\n  请选择输出格式:"
     [[ $REPLY != 0 ]] || return
     if [[ $REPLY == 1 ]]; then
-        _info "将下面的节点添加到 Mihomo 配置的 proxies 列表中："
         mihomo_node_json "$mode" "$up_ip" "$up_sni" "$up_sid" "$down_ip" "$down_sni" "$down_sid" | render_mihomo
     else
         export_vless_link "$mode" "$up_ip" "$up_sni" "$up_sid" "$down_ip" "$down_sni" "$down_sid"
