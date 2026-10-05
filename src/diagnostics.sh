@@ -61,13 +61,24 @@ diagnose_sni() {
     printf '%s\n' "$result"
 }
 
+# Keep the original TCP/80 connection probe, resolving each address family explicitly.
+domestic_tcp_probe() {
+    local host="$1" family="$2" address
+    address=$(timeout 2 getent "ahostsv$family" "$host" 2>/dev/null | awk -v family="$family" '
+        family == 4 && $1 ~ /^[0-9.]+$/ {if (!address) address=$1}
+        family == 6 && $1 ~ /:/ && tolower($1) !~ /^::ffff:/ {if (!address) address=$1}
+        END {if (address) print address}') || return 1
+    [[ -n $address ]] || return 1
+    timeout 2 bash -c ': > /dev/tcp/"$1"/80' _ "$address" >/dev/null 2>&1
+}
+
 diagnose_domestic() {
     local family host reachable=0 status="" separator="" reachable_count=0
     _info "检测服务器到国内节点的出站连通性；结果不能证明客户端到本机是否被阻断。"
     for family in 4 6; do
         reachable=0
         for host in sh-cm-dualstack.ip.zstaticcdn.com sh-cu-dualstack.ip.zstaticcdn.com sh-ct-dualstack.ip.zstaticcdn.com; do
-            if timeout 3 ping "-$family" -n -c 1 -W 2 "$host" >/dev/null 2>&1; then
+            if domestic_tcp_probe "$host" "$family"; then
                 reachable=1
                 break
             fi

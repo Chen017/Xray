@@ -26,8 +26,15 @@ ip() {
     else echo '1.1.1.1 dev eth0 src 203.0.113.10'; fi
 }
 wget() { echo 'ip=203.0.113.10'; }
-timeout() { shift; "$@"; }
-ping() { echo ping >> "$TEST_STATE/entry-ping.calls"; return 0; }
+getent() { if [[ $1 == ahostsv6 ]]; then echo '2001:db8::1 STREAM'; else echo '203.0.113.1 STREAM'; fi; }
+timeout() {
+    shift
+    if [[ $1 == bash && $2 == -c && $3 == *'/dev/tcp/'* ]]; then
+        echo tcp >> "$TEST_STATE/entry-tcp.calls"
+        return 0
+    fi
+    "$@"
+}
 dig() { if [[ $* == *AAAA* ]]; then echo 2001:db8::1; else echo 203.0.113.1; fi; }
 curl() {
     if [[ $1 == --version ]]; then echo 'Features: HTTP2'; return; fi
@@ -41,7 +48,7 @@ ENV
             <<< $'2\n1\n2\n\n0' > "$scratch/entrypoint-$launch.txt"
         check grep -q '^vless://' "$scratch/entrypoint-$launch.txt"
         check grep -q 'GFW放行: .*✓' "$scratch/entrypoint-$launch.txt"
-        check test "$(wc -l < "$TEST_STATE/entry-ping.calls")" = "$((launch*2))"
+        check test "$(wc -l < "$TEST_STATE/entry-tcp.calls")" = "$((launch*2))"
         check test "$(wc -l < "$TEST_STATE/entry-curl.calls")" = "$((launch*4))"
     done
 ) || exit 1

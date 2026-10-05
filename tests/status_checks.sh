@@ -55,13 +55,13 @@ pass 'native nftables summary follows INPUT jumps and handles inline and named p
         if [[ $* == *ipinfo.io* ]]; then echo 'AS123 example'; else echo -n 2; fi
     }
     dig() { if [[ $* == *AAAA* ]]; then echo 2001:db8::1; else echo 203.0.113.1; fi; }
-    ping() { echo call >> "$TEST_STATE/startup-ping.calls"; return 0; }
+    domestic_tcp_probe() { echo call >> "$TEST_STATE/startup-tcp.calls"; return 0; }
     timeout() { shift; "$@"; }
     cache_test_key='4:us.kjwing.com'
     diagnostic_cache[$cache_test_key]='stale'
     check refresh_startup_checks
     check test "${diagnostic_cache[$cache_test_key]}" != stale
-    check test "$(wc -l < "$TEST_STATE/startup-ping.calls")" = 2
+    check test "$(wc -l < "$TEST_STATE/startup-tcp.calls")" = 2
     _get_overview
     check test "$_ov_ip_blocked" != "${gray}未检测${none}"
     check test -n "$_ov_v4_sni_status"
@@ -72,21 +72,21 @@ pass 'native nftables summary follows INPUT jumps and handles inline and named p
     check test "$count" = "$(wc -l < "$TEST_STATE/startup-curl.calls")"
     check refresh_startup_checks
     check test "$count" -lt "$(wc -l < "$TEST_STATE/startup-curl.calls")"
-    ping() { return 1; }
+    domestic_tcp_probe() { return 1; }
     diagnose_domestic >/dev/null
     _get_overview
     check test "$_ov_ip_blocked" = "${red}✗${none}"
-    ping() { [[ $1 == -4 ]]; }
+    domestic_tcp_probe() { [[ $2 == 4 ]]; }
     diagnose_domestic >/dev/null
     check test "$domestic_status" = "v4 ${green}✓${none} / v6 ${red}✗${none}"
-    ping() { [[ $1 == -6 ]]; }
+    domestic_tcp_probe() { [[ $2 == 6 ]]; }
     diagnose_domestic >/dev/null
     check test "$domestic_status" = "v4 ${red}✗${none} / v6 ${green}✓${none}"
-    ping() { return 0; }
+    domestic_tcp_probe() { return 0; }
     diagnose_domestic >/dev/null
     check test "$domestic_status" = "${green}✓${none}"
 ) || exit 1
-pass 'each startup refreshes ping/SNI checks; returning to the menu uses the current launch cache'
+pass 'each startup refreshes TCP/SNI checks; returning to the menu uses the current launch cache'
 
 (
     dig() { return 1; }

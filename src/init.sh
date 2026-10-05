@@ -130,7 +130,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip jq flock logrotate ping"
+is_pkg="wget curl unzip jq flock logrotate"
 
 check_dependencies() {
     local missing_pkgs=""
@@ -138,9 +138,6 @@ check_dependencies() {
         if ! command -v "$pkg" &>/dev/null; then
             case "$pkg" in
                 flock) missing_pkgs="$missing_pkgs util-linux" ;;
-                ping)
-                    if [[ $cmd == *apt-get ]]; then missing_pkgs="$missing_pkgs iputils-ping"
-                    else missing_pkgs="$missing_pkgs iputils"; fi ;;
                 *) missing_pkgs="$missing_pkgs $pkg" ;;
             esac
         fi
