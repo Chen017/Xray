@@ -40,7 +40,7 @@ ENV
         check env BASH_ENV="$entry_root/environment.sh" bash "$entry_root/xray.sh" \
             <<< $'2\n1\n2\n\n0' > "$scratch/entrypoint-$launch.txt"
         check grep -q '^vless://' "$scratch/entrypoint-$launch.txt"
-        check grep -q 'v4 出站可达' "$scratch/entrypoint-$launch.txt"
+        check grep -q 'GFW放行: .*✓' "$scratch/entrypoint-$launch.txt"
         check test "$(wc -l < "$TEST_STATE/entry-ping.calls")" = "$((launch*2))"
         check test "$(wc -l < "$TEST_STATE/entry-curl.calls")" = "$((launch*4))"
     done

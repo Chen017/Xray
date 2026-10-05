@@ -62,7 +62,7 @@ diagnose_sni() {
 }
 
 diagnose_domestic() {
-    local family host reachable=0 status="" separator=""
+    local family host reachable=0 status="" separator="" reachable_count=0
     _info "检测服务器到国内节点的出站连通性；结果不能证明客户端到本机是否被阻断。"
     for family in 4 6; do
         reachable=0
@@ -74,14 +74,19 @@ diagnose_domestic() {
         done
         if (( reachable )); then
             _ok "IPv$family：至少一个测试节点可达"
-            status+="$separator${green}v$family 出站可达${none}"
+            status+="${separator}v$family ${green}✓${none}"
+            ((reachable_count+=1))
         else
             _info "IPv$family：所选测试节点未连通，原因无法仅凭此测试确定"
-            status+="$separator${yellow}v$family 未连通${none}"
+            status+="${separator}v$family ${red}✗${none}"
         fi
         separator=" / "
     done
-    domestic_status="$status"
+    case "$reachable_count" in
+        2) domestic_status="${green}✓${none}" ;;
+        0) domestic_status="${red}✗${none}" ;;
+        *) domestic_status="$status" ;;
+    esac
     domestic_time=$(date +%s)
 }
 

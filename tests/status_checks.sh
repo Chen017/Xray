@@ -75,7 +75,16 @@ pass 'native nftables summary follows INPUT jumps and handles inline and named p
     ping() { return 1; }
     diagnose_domestic >/dev/null
     _get_overview
-    check grep -q 未连通 <<< "$_ov_ip_blocked"
+    check test "$_ov_ip_blocked" = "${red}✗${none}"
+    ping() { [[ $1 == -4 ]]; }
+    diagnose_domestic >/dev/null
+    check test "$domestic_status" = "v4 ${green}✓${none} / v6 ${red}✗${none}"
+    ping() { [[ $1 == -6 ]]; }
+    diagnose_domestic >/dev/null
+    check test "$domestic_status" = "v4 ${red}✗${none} / v6 ${green}✓${none}"
+    ping() { return 0; }
+    diagnose_domestic >/dev/null
+    check test "$domestic_status" = "${green}✓${none}"
 ) || exit 1
 pass 'each startup refreshes ping/SNI checks; returning to the menu uses the current launch cache'
 
