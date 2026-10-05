@@ -21,15 +21,15 @@ DEFAULT_DOWNLINK_SNI="dodoshort.com"
 CDN_BLACKLIST_STRICT="Cloudflare|Fastly|CloudFront|Incapsula|Imperva|Edgecast|StackPath|KeyCDN"
 
 msg() {
-    echo -e "$@"
+    echo -e "$*"
 }
 
 msg_ul() {
-    echo -e "\e[4m$@\e[0m"
+    echo -e "\e[4m$*\e[0m"
 }
 
 get_uuid() {
-    tmp_uuid=$(cat /proc/sys/kernel/random/uuid)
+    tmp_uuid=$("$is_core_bin" uuid)
 }
 
 get_short_ids() {
@@ -51,7 +51,9 @@ get_ip() {
     
     [[ ! $ip ]] && export "$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
-        err "获取服务器 IP 失败"
+        unset is_get_ip_done
+        _fail "获取服务器 IP 失败，请检查网络后重试"
+        return 1
     }
 }
 
@@ -98,50 +100,7 @@ get_default_sni() {
 }
 
 # 多 DNS 视角 CDN 检测：向多个地理分散的公共 DNS 查询，去重后 IP > 1 即判定为 CDN
-_detect_cdn() {
-    local domain="$1"
-    local dns_servers=("8.8.8.8" "1.1.1.1" "208.67.222.222" "9.9.9.9")
-    local all_ips=""
 
-    if command -v dig &>/dev/null; then
-        # 优先使用 dig
-        for ns in "${dns_servers[@]}"; do
-            local ips=$(dig +short +time=2 +tries=1 A "$domain" @"$ns" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
-        done
-    elif command -v nslookup &>/dev/null; then
-        # 降级到 nslookup
-        for ns in "${dns_servers[@]}"; do
-            local ips=$(nslookup "$domain" "$ns" 2>/dev/null | awk '/^Address:/ && !/#/ {print $2}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
-        done
-    else
-        # fallback: getent + ipinfo（使用缩减后的纯 CDN 黑名单）
-        local first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
-        [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | head -1)
-        if [[ -n "$first_ip" ]]; then
-            local org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
-            if [[ -n "$org" ]]; then
-                local cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST_STRICT" | head -1)
-                if [[ -n "$cdn_name" ]]; then
-                    echo "CDN:$cdn_name|$org"
-                    return
-                fi
-            fi
-        fi
-        echo "CDN_OK"
-        return
-    fi
-
-    # 去重统计唯一 IP 数
-    local unique_count=$(echo "$all_ips" | sed '/^$/d' | sort -u | wc -l)
-    if [[ $unique_count -gt 1 ]]; then
-        local ip_list=$(echo "$all_ips" | sed '/^$/d' | sort -u | head -5 | tr '\n' ',' | sed 's/,$//')
-        echo "CDN:Anycast/GeoDNS|多 DNS 解析到 ${unique_count} 个不同 IP ($ip_list)"
-    else
-        echo "CDN_OK"
-    fi
-}
 
 show_list() {
     local i=0
@@ -155,7 +114,7 @@ show_list() {
 is_test() {
     case $1 in
     number)
-        echo $2 | grep -E '^[1-9][0-9]?+$'
+        [[ $2 =~ ^[1-9][0-9]*$ ]] && echo "$2"
         ;;
     port)
         if [[ $(is_test number $2) ]]; then
@@ -166,13 +125,13 @@ is_test() {
         [[ $(is_port_used $2) && ! $is_cant_test_port ]] && echo ok
         ;;
     domain)
-        echo $2 | grep -E -i '^\w(\w|\-|\.)?+\.\w+$'
+        [[ $2 =~ ^([a-zA-Z0-9][a-zA-Z0-9-]*\.)+[a-zA-Z][a-zA-Z0-9-]*$ && ${#2} -le 253 ]] && echo "$2"
         ;;
     path)
         echo $2 | grep -E -i '^\/\w(\w|\-|\/)?+\w$'
         ;;
     uuid)
-        echo $2 | grep -E -i '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+        echo "$2" | grep -E -i '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         ;;
     esac
 
@@ -196,54 +155,21 @@ is_port_used() {
 
 # ─── list managed regular node configs (excludes 99_relay_in.json) ───
 list_managed_node_configs() {
-    local pattern="${1:-.json$}"
-    if [[ -d $is_conf_dir ]]; then
-        ls "$is_conf_dir" 2>/dev/null | grep -E -i "$pattern" | sed '/dynamic-port-.*-link/d' | grep -v '^99_relay_in\.json$'
-    fi
+    local file pattern="${1:-\.json$}"
+    for file in "$is_conf_dir"/*.json; do
+        [[ -f "$file" && ${file##*/} != 99_relay_in.json ]] || continue
+        [[ ${file##*/} =~ $pattern ]] && printf '%s\n' "${file##*/}"
+    done
+    return 0
 }
 
-save_iptables() {
-    if [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
-        iptables-save > /etc/iptables/rules.v4
-        [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
-    elif [[ $(type -P netfilter-persistent) ]]; then
-        netfilter-persistent save &>/dev/null
-    fi
-}
-
-open_port() {
-    local p=$1
-    close_port $p
-    if [[ $(type -P iptables) ]]; then
-        iptables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
-        iptables -I INPUT -p udp --dport $p -j ACCEPT &>/dev/null
-    fi
-    if [[ $(type -P ip6tables) ]]; then
-        ip6tables -I INPUT -p tcp --dport $p -j ACCEPT &>/dev/null
-        ip6tables -I INPUT -p udp --dport $p -j ACCEPT &>/dev/null
-    fi
-    save_iptables
-}
-
-close_port() {
-    local p=$1
-    if [[ $(type -P iptables) ]]; then
-        while iptables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null; do :; done
-        while iptables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null; do :; done
-    fi
-    if [[ $(type -P ip6tables) ]]; then
-        while ip6tables -D INPUT -p tcp --dport $p -j ACCEPT &>/dev/null; do :; done
-        while ip6tables -D INPUT -p udp --dport $p -j ACCEPT &>/dev/null; do :; done
-    fi
-    save_iptables
-}
 
 # ask input a string or pick a option for list.
 ask() {
     case $1 in
     set_change_list)
         is_tmp_list=()
-        for v in ${is_can_change[@]}; do
+    for v in "${is_can_change[@]}"; do
             is_tmp_list+=("${change_list[$v]}")
         done
         is_opt_msg="\n  请选择更改:\n"
@@ -271,7 +197,7 @@ ask() {
     [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
         echo -ne "$is_opt_input_msg "
-        read REPLY
+        read -r REPLY || { REPLY=0; unset is_tmp_list is_default_arg; return 1; }
         [[ $REPLY == "0" ]] && {
             unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg
             return
@@ -318,182 +244,36 @@ ask() {
 }
 
 # create file
-create() {
+create() { config_transaction _create "$@"; }
+
+_create() {
     case $1 in
     server)
-        get new
+        get new || return 1
         
         is_config_name=${2}-${port}.json
         is_json_file=$is_conf_dir/$is_config_name
         
-        [[ $is_test_json ]] && return # tmp test
         
-        is_v6only_str=''
-
-        # Inject second client identity if line relay is active
-        local r_client_entry_v4=""
-        local r_client_entry_v6=""
-        local r_client_entry_xhttp=""
-        if [[ -f $is_relay_state_file ]] && [[ "$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)" == "line" ]]; then
-            local r_client_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file" 2>/dev/null)
-            if [[ -n "$r_client_uuid" ]]; then
-                r_client_entry_v4=",{\"id\":\"$r_client_uuid\",\"flow\":\"xtls-rprx-vision\",\"email\":\"relay-vision-v4\"}"
-                r_client_entry_v6=",{\"id\":\"$r_client_uuid\",\"flow\":\"xtls-rprx-vision\",\"email\":\"relay-vision-v6\"}"
-                r_client_entry_xhttp=",{\"id\":\"$r_client_uuid\",\"email\":\"relay-xhttp\"}"
-            fi
+        [[ $(is_test domain "$v4_sni") && $(is_test domain "$v6_sni") ]] || {
+            _fail "SNI 必须是有效域名，请检查 IPv4/IPv6 目标域名"
+            return 1
+        }
+        local relay_uuid=""
+        if [[ $(relay_get_role) == line ]]; then
+            relay_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file") || return 1
+        fi
+        is_new_json=$(jq -n --argjson port "$port" --arg uuid "$uuid" \
+            --arg private_key "$is_private_key" --arg public_key "$is_public_key" \
+            --arg sni4 "$v4_sni" --arg sni6 "$v6_sni" \
+            --arg path "${v4_path:-/api/v3/updates}" --arg relay_uuid "$relay_uuid" \
+            --argjson sid4 "${v4_short_ids:-$is_short_ids}" --argjson sid6 "${v6_short_ids:-$is_short_ids}" \
+            -f "$is_sh_dir/src/node.jq") || return 1
+        atomic_json "$is_json_file" "$is_new_json" || return 1
+        if [[ -n "$is_config_file" && $is_config_file != "$is_config_name" ]]; then
+            rm -f "$is_conf_dir/$is_config_file" || return 1
         fi
 
-        # generate config
-        is_new_json=$(cat <<EOF
-{
-    "inbounds": [
-        {
-            "tag": "public_${port}_v4",
-            "listen": "0.0.0.0",
-            "port": $port,
-            "protocol": "vless",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$uuid",
-                        "flow": "xtls-rprx-vision",
-                        "email": "vision-v4"
-                    }$r_client_entry_v4
-                ],
-                "decryption": "none",
-                "fallbacks": [
-                    {
-                        "dest": "@xhttp_inner"
-                    }
-                ]
-            },
-            "streamSettings": {
-                "network": "raw",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "${v4_sni:-$is_servername}:443",
-                    "serverNames": [
-                        "${v4_sni:-$is_servername}"
-                    ],
-                    "privateKey": "$is_private_key",
-                    "publicKey": "$is_public_key",
-                    "shortIds": ${v4_short_ids:-$is_short_ids},
-                    "maxTimeDiff": 60000
-                },
-                "sockopt": {
-                    "tcpFastOpen": true
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls", "quic"],
-                "routeOnly": true
-            }
-        },
-        {
-            "tag": "public_${port}_v6",
-            "listen": "::",
-            "port": $port,
-            "protocol": "vless",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$uuid",
-                        "flow": "xtls-rprx-vision",
-                        "email": "vision-v6"
-                    }$r_client_entry_v6
-                ],
-                "decryption": "none",
-                "fallbacks": [
-                    {
-                        "dest": "@xhttp_inner"
-                    }
-                ]
-            },
-            "streamSettings": {
-                "network": "raw",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "${v6_sni:-$is_servername}:443",
-                    "serverNames": [
-                        "${v6_sni:-$is_servername}"
-                    ],
-                    "privateKey": "$is_private_key",
-                    "publicKey": "$is_public_key",
-                    "shortIds": ${v6_short_ids:-$is_short_ids},
-                    "maxTimeDiff": 60000
-                },
-                "sockopt": {
-                    "tcpFastOpen": true
-                    $is_v6only_str
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls", "quic"],
-                "routeOnly": true
-            }
-        },
-        {
-            "tag": "local_xhttp_stream_up",
-            "listen": "@xhttp_inner",
-            "protocol": "vless",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$uuid",
-                        "email": "xhttp-stream-up"
-                    }$r_client_entry_xhttp
-                ],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "xhttp",
-                "security": "none",
-                "xhttpSettings": {
-                    "mode": "stream-up",
-                    "host": "",
-                    "path": "${v4_path:-/api/v3/updates}",
-                    "uplinkHTTPMethod": "PUT",
-                    "noGRPCHeader": true,
-                    "noSSEHeader": true,
-                    "xPaddingBytes": "100-1000",
-                    "xPaddingObfsMode": true,
-                    "xPaddingPlacement": "queryInHeader",
-                    "xPaddingMethod": "tokenish",
-                    "xPaddingKey": "x_padding",
-                    "xPaddingHeader": "Referer",
-                    "sessionPlacement": "path",
-                    "seqPlacement": "path",
-                    "scStreamUpServerSecs": "20-80",
-                    "xmux": {
-                        "maxConcurrency": "16-32",
-                        "cMaxReuseTimes": 0,
-                        "hMaxRequestTimes": "600-900",
-                        "hMaxReusableSecs": "1800-3000",
-                        "hKeepAlivePeriod": 0
-                    }
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls", "quic"],
-                "routeOnly": true
-            }
-        }
-    ]
-}
-EOF
-)
-        # del old file
-        [[ -n "$is_config_file" ]] && is_no_del_msg=1 && del "$is_config_file"
-        
-        # save json to file
-        cat <<<"$is_new_json" >"$is_json_file"
-        chmod 600 "$is_json_file"
-        
         if [[ -n "$is_new_install" ]]; then
             echo
             _ok "VLESS-REALITY 节点基础配置生成完毕"
@@ -503,13 +283,12 @@ EOF
             echo
         fi
         
-        open_port $port
-        [[ $is_new_install ]] && _ok "防火墙端口已放行: $port"
+
         
         if [[ $is_new_install ]]; then
             create config.json
         else
-            manage restart &
+            return 0
         fi
         ;;
     config.json)
@@ -586,8 +365,7 @@ EOF
 EOF
         chmod 644 "$is_config_json"
         # inject custom rules into config.json if they exist
-        apply_custom_rules
-        manage restart &
+        apply_custom_rules || return 1
         ;;
     esac
 }
@@ -605,18 +383,9 @@ relay_get_role() {
     fi
 }
 
-relay_load_state() {
-    if relay_state_exists; then
-        cat "$is_relay_state_file" 2>/dev/null
-    else
-        echo '{}'
-    fi
-}
 
 relay_save_state() {
-    local state_json="$1"
-    echo "$state_json" > "$is_relay_state_file"
-    chmod 600 "$is_relay_state_file"
+    atomic_json "$is_relay_state_file" "$1"
 }
 
 relay_delete_state() {
@@ -635,8 +404,7 @@ load_custom_rules() {
 }
 
 save_custom_rules() {
-    local rules_json="$1"
-    echo "$rules_json" > $is_custom_rules_file
+    atomic_json "$is_custom_rules_file" "$1"
 }
 
 # parse user input like "DOMAIN-SUFFIX,kimi.ai" into jq-compatible rule fields
@@ -687,8 +455,8 @@ rule_to_display() {
     local tag="$3"
     local action="direct"
     [[ "$tag" == "block" ]] && action="block"
-    [[ "$tag" == "direct-v4" ]] && action="强制IPv4"
-    [[ "$tag" == "direct-v6" ]] && action="强制IPv6"
+    [[ "$tag" == "direct-v4" ]] && action="IPv4解析"
+    [[ "$tag" == "direct-v6" ]] && action="IPv6解析"
     
     local display_type=""
     case $field in
@@ -735,7 +503,7 @@ rebuild_main_config() {
     # Ensure: direct (0), direct-v4, direct-v6, block, and if line: relay-out
     local tmp_json=$(jq --arg role "$role" --argjson rstate "${relay_state:-null}" '
         (if (.outbounds | length == 0) or (.outbounds[0].tag != "direct") then
-            .outbounds = ([{"protocol": "freedom", "tag": "direct", "settings": {"domainStrategy": "UseIPv4v6"}}] + (.outbounds | map(select(.tag != "direct"))))
+            .outbounds = ([((.outbounds[]? | select(.tag == "direct")) // {"protocol":"freedom","tag":"direct","settings":{"domainStrategy":"UseIPv4v6"}})] + (.outbounds | map(select(.tag != "direct"))))
         else . end) |
         (if (.outbounds | map(select(.tag == "direct-v4")) | length) == 0 then
             .outbounds += [{"protocol": "freedom", "tag": "direct-v4", "settings": {"domainStrategy": "UseIPv4"}}]
@@ -770,8 +538,8 @@ rebuild_main_config() {
             .outbounds | map(select(.tag != "relay-out"))
         end) as $new_outbounds |
         .outbounds = $new_outbounds
-    ' "$is_config_json")
-    [[ $? -eq 0 && -n "$tmp_json" ]] && echo "$tmp_json" > "$is_config_json" || return 1
+    ' "$is_config_json") || return 1
+    [[ -n "$tmp_json" ]] || return 1
 
     # 2. Update routing.rules:
     # 1. relay user -> relay-out (if role == line)
@@ -798,9 +566,9 @@ rebuild_main_config() {
             {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
         ] as $base_blocks |
         .routing.rules = ($relay_rules + $c_rules + $base_blocks)
-    ' "$is_config_json")
+    ' <<< "$tmp_json")
     if [[ $? -eq 0 && -n "$tmp_json" ]]; then
-        echo "$tmp_json" > "$is_config_json"
+        atomic_json "$is_config_json" "$tmp_json" || return 1
     else
         _fail "更新配置路由规则失败"
         return 1
@@ -812,169 +580,6 @@ apply_custom_rules() {
     rebuild_main_config
 }
 
-manage_custom_rules() {
-    while :; do
-        clear
-        echo
-        _line
-        echo -e "  ${bold}${cyan}自定义分流规则管理${none}"
-        _line
-        
-        # load and display current rules
-        local rules_json=$(load_custom_rules)
-        local count=$(echo "$rules_json" | jq 'length')
-        
-        if [[ $count -gt 0 && "$count" != "null" ]]; then
-            echo -e "  ${cyan}当前自定义规则 ($count 条):${none}"
-            echo
-            local rules_list=$(echo "$rules_json" | jq -r '
-                if type == "array" then
-                    to_entries | .[] | 
-                    (if .value.domain then "domain," + .value.domain[0] 
-                     elif .value.ip then "ip," + .value.ip[0] 
-                     else "unknown," end) + "," + .value.outboundTag
-                else empty end
-            ')
-
-            local i=1
-            while IFS=',' read -r field value tag; do
-                [[ -z "$field" ]] && continue
-                local display=$(rule_to_display "$field" "$value" "$tag")
-                printf "  ${green}%2s)${none} %s\n" "$i" "$display"
-                ((i++))
-            done <<< "$rules_list"
-        else
-            echo -e "  ${gray}暂无自定义规则${none}"
-        fi
-        
-        echo
-        _section "操作"
-        _menu 1 "添加规则"
-        _menu 2 "删除规则"
-        echo
-        echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回${none}]: "
-        read REPLY
-        [[ "$REPLY" == "0" ]] && return
-        
-        case $REPLY in
-        1)
-            # add rule
-            echo
-            echo -e "  ${cyan}支持的规则格式:${none}"
-            echo -e "    ${green}DOMAIN${none},example.com         精确域名匹配"
-            echo -e "    ${green}DOMAIN-SUFFIX${none},example.com  域名后缀匹配"
-            echo -e "    ${green}DOMAIN-KEYWORD${none},example     域名关键词匹配"
-            echo -e "    ${green}IP-CIDR${none},1.2.3.0/24         IP 段匹配"
-            echo -e "    ${green}GEOSITE${none},category            GeoSite 规则集"
-            echo -e "    ${green}GEOIP${none},code                  GeoIP 规则集"
-            echo
-            echo -ne "  请输入规则 (例: ${green}DOMAIN-SUFFIX,kimi.ai${none}) [0 返回]: "
-            read rule_input
-            [[ "$rule_input" == "0" || -z "$rule_input" ]] && continue
-            
-            # validate input format
-            if ! echo "$rule_input" | grep -qE '^[A-Za-z-]+,.+'; then
-                _fail "格式错误，请使用: 类型,值 (例: DOMAIN-SUFFIX,kimi.ai)"
-                pause
-                continue
-            fi
-            
-            # parse rule
-            if ! parse_rule_input "$rule_input"; then
-                _fail "无法识别的规则类型，支持: DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, IP-CIDR, GEOSITE, GEOIP"
-                pause
-                continue
-            fi
-            
-            # ask action
-            echo
-            ask list is_rule_action "放行(direct) 强制IPv4(direct-v4) 强制IPv6(direct-v6) 阻止(block)" "\n  请选择动作:"
-            [[ $REPLY == "0" ]] && continue
-            local outbound_tag="direct"
-            [[ $REPLY == 2 ]] && outbound_tag="direct-v4"
-            [[ $REPLY == 3 ]] && outbound_tag="direct-v6"
-            [[ $REPLY == 4 ]] && outbound_tag="block"
-            
-            # build new rule json
-            local new_rule=""
-            if [[ "$_rule_field" == "domain" ]]; then
-                new_rule=$(jq -n --arg val "$_rule_value" --arg tag "$outbound_tag" '{
-                    "type": "field",
-                    "domain": [$val],
-                    "outboundTag": $tag
-                }')
-            else
-                new_rule=$(jq -n --arg val "$_rule_value" --arg tag "$outbound_tag" '{
-                    "type": "field",
-                    "ip": [$val],
-                    "outboundTag": $tag
-                }')
-            fi
-            
-            # append to rules file
-            local updated=$(echo "$rules_json" | jq --argjson rule "$new_rule" '. + [$rule]')
-            save_custom_rules "$updated"
-            
-            # re-apply to config.json
-            apply_custom_rules
-            
-            local display=$(rule_to_display "$_rule_field" "$_rule_value" "$outbound_tag")
-            echo
-            _ok "已添加规则: $display"
-            manage restart &
-            sleep 1
-            _ok "配置已更新并重启 Xray"
-            pause
-            ;;
-        2)
-            # delete rule
-            if [[ $count -eq 0 || "$count" == "null" ]]; then
-                echo
-                _fail "当前没有自定义规则可删除"
-                pause
-                continue
-            fi
-            echo
-            echo -ne "  请选择要删除的规则 [${green}1-$count${none}] [${red}0 返回${none}]: "
-            read del_idx
-            [[ "$del_idx" == "0" || -z "$del_idx" ]] && continue
-            
-            # validate index
-            if ! echo "$del_idx" | grep -qE '^[0-9]+$' || [[ $del_idx -lt 1 || $del_idx -gt $count ]]; then
-                _fail "无效的序号"
-                pause
-                continue
-            fi
-            
-            # get display info before delete
-            local di=$((del_idx-1))
-            local d_field=$(echo "$rules_json" | jq -r ".[$di] | if .domain then \"domain\" elif .ip then \"ip\" else \"unknown\" end")
-            local d_value=""
-            if [[ "$d_field" == "domain" ]]; then
-                d_value=$(echo "$rules_json" | jq -r ".[$di].domain[0]")
-            elif [[ "$d_field" == "ip" ]]; then
-                d_value=$(echo "$rules_json" | jq -r ".[$di].ip[0]")
-            fi
-            local d_tag=$(echo "$rules_json" | jq -r ".[$di].outboundTag")
-            local d_display=$(rule_to_display "$d_field" "$d_value" "$d_tag")
-            
-            # delete rule by index
-            local updated=$(echo "$rules_json" | jq "del(.[$di])")
-            save_custom_rules "$updated"
-            
-            # re-apply to config.json
-            apply_custom_rules
-            
-            echo
-            _ok "已删除规则: $d_display"
-            manage restart &
-            sleep 1
-            _ok "配置已更新并重启 Xray"
-            pause
-            ;;
-        esac
-    done
-}
 
 # ─── relay validation helpers ────────────────────────────
 relay_validate_ipv4() {
@@ -1216,26 +821,7 @@ relay_generate_vlessenc() {
 }
 
 # ─── relay firewall helpers ──────────────────────────────
-relay_open_firewall() {
-    local peer_ip="$1"
-    local port="$2"
-    [[ -z "$peer_ip" || -z "$port" ]] && return 1
-    relay_close_firewall "$peer_ip" "$port"
-    if command -v iptables &>/dev/null; then
-        iptables -I INPUT -p tcp -s "${peer_ip}/32" --dport "$port" -j ACCEPT &>/dev/null
-    fi
-    save_iptables
-}
 
-relay_close_firewall() {
-    local peer_ip="$1"
-    local port="$2"
-    [[ -z "$peer_ip" || -z "$port" ]] && return 1
-    if command -v iptables &>/dev/null; then
-        while iptables -D INPUT -p tcp -s "${peer_ip}/32" --dport "$port" -j ACCEPT &>/dev/null; do :; done
-    fi
-    save_iptables
-}
 
 # ─── relay config helpers ────────────────────────────────
 relay_create_landing_inbound() {
@@ -1284,9 +870,7 @@ EOF
         _fail "生成的 99_relay_in.json 格式异常"
         return 1
     fi
-    echo "$json_content" > "$target_file"
-    chmod 600 "$target_file"
-    return 0
+    atomic_json "$target_file" "$json_content"
 }
 
 relay_remove_landing_inbound() {
@@ -1320,7 +904,9 @@ relay_add_client_identity() {
             )
         ' "$conf_path" 2>/dev/null)
         if [[ $? -eq 0 && -n "$updated" ]]; then
-            echo "$updated" > "$conf_path"
+            atomic_json "$conf_path" "$updated" || return 1
+        else
+            return 1
         fi
     done
 }
@@ -1341,373 +927,21 @@ relay_remove_client_identity() {
             )
         ' "$conf_path" 2>/dev/null)
         if [[ $? -eq 0 && -n "$updated" ]]; then
-            echo "$updated" > "$conf_path"
+            atomic_json "$conf_path" "$updated" || return 1
+        else
+            return 1
         fi
     done
 }
 
-relay_ensure_line_outbound() {
-    rebuild_main_config
-}
-
-relay_remove_line_outbound() {
-    rebuild_main_config
-}
 
 # ─── relay transaction helpers ───────────────────────────
-relay_backup() {
-    relay_backup_dir=$(mktemp -d /tmp/xray_relay_bak_XXXXXX)
-    [[ -f $is_config_json ]] && cp -f "$is_config_json" "$relay_backup_dir/config.json"
-    [[ -f $is_relay_state_file ]] && cp -f "$is_relay_state_file" "$relay_backup_dir/relay.json"
-    if [[ -d $is_conf_dir ]]; then
-        mkdir -p "$relay_backup_dir/conf"
-        cp -rf "$is_conf_dir"/* "$relay_backup_dir/conf/" 2>/dev/null || true
-    fi
-}
 
-relay_restore() {
-    if [[ -n "$relay_backup_dir" && -d "$relay_backup_dir" ]]; then
-        _step "正在执行回滚恢复..."
-        [[ -f "$relay_backup_dir/config.json" ]] && cp -f "$relay_backup_dir/config.json" "$is_config_json"
-        if [[ -f "$relay_backup_dir/relay.json" ]]; then
-            cp -f "$relay_backup_dir/relay.json" "$is_relay_state_file"
-        else
-            rm -f "$is_relay_state_file"
-        fi
-        if [[ -d "$relay_backup_dir/conf" ]]; then
-            if [[ ! -f "$relay_backup_dir/conf/99_relay_in.json" ]]; then
-                rm -f "$is_conf_dir/99_relay_in.json"
-            fi
-            cp -rf "$relay_backup_dir/conf"/* "$is_conf_dir/" 2>/dev/null || true
-        fi
-        manage restart &>/dev/null
-        _ok "已恢复原配置"
-    fi
-    relay_cleanup_backup
-}
-
-relay_cleanup_backup() {
-    if [[ -n "$relay_backup_dir" && -d "$relay_backup_dir" ]]; then
-        rm -rf "$relay_backup_dir"
-        unset relay_backup_dir
-    fi
-}
-
-relay_validate_config() {
-    local test_out
-    test_out=$($is_core_bin run -test -config "$is_config_json" -confdir "$is_conf_dir" 2>&1)
-    if [[ $? -ne 0 ]]; then
-        _fail "Xray 配置校验失败:"
-        echo -e "${red}${test_out}${none}"
-        return 1
-    fi
-    return 0
-}
-
-relay_restart_safe() {
-    manage restart &>/dev/null
-    sleep 2
-    if [[ ! $(pgrep -f $is_core_bin) ]]; then
-        _fail "Xray 重启失败，进程未能正常启动"
-        return 1
-    fi
-    return 0
-}
 
 # ─── relay operations & menu ─────────────────────────────
-relay_setup_landing() {
-    echo
-    _section "配置本机为落地机"
-    
-    _step "正在检测 Xray VLESS Encryption 能力..."
-    if ! relay_generate_vlessenc; then
-        _fail "当前 Xray-core 不支持所需 VLESS Encryption，请先更新核心。"
-        return 1
-    fi
-    _ok "Xray VLESS Encryption 支持正常"
 
-    local managed_nodes=$(list_managed_node_configs)
-    if [[ -z "$managed_nodes" ]]; then
-        _fail "未检测到已配置的普通节点，请先创建节点后再配置中继。"
-        return 1
-    fi
 
-    echo
-    echo -e "  ${cyan}落地机将只接受指定线路机 IPv4 的中继连接。${none}"
-    prompt_input "请输入线路机 IPv4 地址" peer_ip
-    [[ -z "$peer_ip" ]] && return
-    if ! relay_validate_ipv4 "$peer_ip"; then
-        _fail "无效的 IPv4 地址: $peer_ip"
-        return 1
-    fi
-
-    local landing_pub_ip=""
-    get_ip
-    if relay_validate_ipv4 "$ip"; then
-        landing_pub_ip="$ip"
-    fi
-    if [[ -z "$landing_pub_ip" ]]; then
-        local fetched_v4=$(curl -s4m 3 https://api.ipify.org 2>/dev/null || curl -s4m 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
-        if relay_validate_ipv4 "$fetched_v4"; then
-            landing_pub_ip="$fetched_v4"
-        fi
-    fi
-    if [[ -z "$landing_pub_ip" ]]; then
-        echo
-        echo -e "  ${yellow}未能自动获取到落地机的公网 IPv4 地址。${none}"
-        prompt_input "请输入本机 (落地机) 的公网 IPv4 地址" landing_pub_ip
-        [[ -z "$landing_pub_ip" ]] && return 1
-        if ! relay_validate_ipv4 "$landing_pub_ip"; then
-            _fail "输入的落地机 IPv4 地址格式无效: $landing_pub_ip"
-            return 1
-        fi
-    fi
-    if [[ "$landing_pub_ip" == "$peer_ip" ]]; then
-        _fail "落地机公网 IPv4 ($landing_pub_ip) 不能与线路机 IP ($peer_ip) 相同！"
-        return 1
-    fi
-
-    _step "正在选择中继监听端口 (20000-60000) ..."
-    local relay_port=$(relay_get_random_port)
-    if [[ -z "$relay_port" ]]; then
-        _fail "无法找到可用的中继端口，配置已终止。"
-        return 1
-    fi
-    _ok "分配中继端口: $relay_port"
-
-    get_uuid
-    local transport_uuid="$tmp_uuid"
-    local dec="$vlessenc_decryption"
-    local enc="$vlessenc_encryption"
-
-    relay_backup
-
-    if ! relay_create_landing_inbound "$transport_uuid" "$dec" "$relay_port"; then
-        relay_restore
-        return 1
-    fi
-
-    local landing_state=$(jq -n \
-        --arg peer "$peer_ip" \
-        --arg lip "$landing_pub_ip" \
-        --argjson port "$relay_port" \
-        --arg tuuid "$transport_uuid" \
-        --arg dec "$dec" \
-        --arg enc "$enc" '{
-            "version": 1,
-            "role": "landing",
-            "landing_ip": $lip,
-            "peer_ip": $peer,
-            "listen_port": $port,
-            "transport_uuid": $tuuid,
-            "decryption": $dec,
-            "encryption": $enc
-        }')
-    relay_save_state "$landing_state"
-
-    _step "正在校验 Xray 配置..."
-    if ! relay_validate_config; then
-        relay_restore
-        return 1
-    fi
-
-    _step "正在配置防火墙规则 (仅允许 $peer_ip/32 -> $relay_port) ..."
-    relay_open_firewall "$peer_ip" "$relay_port"
-
-    _step "正在重启 Xray 服务..."
-    if ! relay_restart_safe; then
-        relay_close_firewall "$peer_ip" "$relay_port"
-        relay_restore
-        return 1
-    fi
-
-    relay_cleanup_backup
-
-    local relay_link=$(relay_build_link "$transport_uuid" "$landing_pub_ip" "$relay_port" "$enc")
-
-    echo
-    _line
-    _ok "落地机中继配置成功！"
-    _line
-    echo
-    _kv "角色:" "落地机 (landing)"
-    _kv "线路机 IP:" "$peer_ip"
-    _kv "监听端口:" "$relay_port (TCP 仅放行 $peer_ip)"
-    echo
-    _step "请复制以下中继导入链接，并在【线路机】上选择导入:"
-    echo
-    _green "$relay_link"
-    echo
-    _line
-    _info "落地机原有的直连客户端节点保持不变，可继续独立使用。"
-    echo
-}
-
-relay_setup_line() {
-    echo
-    _section "配置本机为线路机"
-
-    _step "正在检测 Xray VLESS Encryption 能力..."
-    if ! relay_generate_vlessenc; then
-        _fail "当前 Xray-core 不支持所需 VLESS Encryption，请先更新核心。"
-        return 1
-    fi
-    _ok "Xray VLESS Encryption 支持正常"
-
-    local managed_nodes=$(list_managed_node_configs)
-    if [[ -z "$managed_nodes" ]]; then
-        _fail "未检测到已配置的普通节点，请先创建节点后再配置中继。"
-        return 1
-    fi
-
-    echo
-    echo -e "  ${cyan}请输入在落地机上生成的中继链接 (vless://...):${none}"
-    prompt_input "中继链接" input_link
-    [[ -z "$input_link" ]] && return
-
-    _step "正在验证中继链接..."
-    if ! relay_parse_link "$input_link"; then
-        _fail "中继链接不合法或参数校验失败（必须为 vless RAW + security:none + xtls-rprx-vision + 合法 encryption 与 IPv4）"
-        return 1
-    fi
-    _ok "中继链接验证通过: 落地 $parsed_landing_ip:$parsed_landing_port"
-
-    get_uuid
-    local client_uuid="$tmp_uuid"
-
-    relay_backup
-
-    local line_state=$(jq -n \
-        --arg lip "$parsed_landing_ip" \
-        --argjson lport "$parsed_landing_port" \
-        --arg tuuid "$parsed_transport_uuid" \
-        --arg enc "$parsed_encryption" \
-        --arg cuuid "$client_uuid" '{
-            "version": 1,
-            "role": "line",
-            "landing_ip": $lip,
-            "landing_port": $lport,
-            "transport_uuid": $tuuid,
-            "encryption": $enc,
-            "client_uuid": $cuuid
-        }')
-    relay_save_state "$line_state"
-
-    relay_add_client_identity "$client_uuid"
-
-    if ! rebuild_main_config; then
-        relay_restore
-        return 1
-    fi
-
-    _step "正在校验 Xray 配置..."
-    if ! relay_validate_config; then
-        relay_restore
-        return 1
-    fi
-
-    _step "正在重启 Xray 服务..."
-    if ! relay_restart_safe; then
-        relay_restore
-        return 1
-    fi
-
-    relay_cleanup_backup
-
-    echo
-    _line
-    _ok "线路机中继配置成功！"
-    _line
-    echo
-    _kv "角色:" "线路机 (line)"
-    _kv "落地机地址:" "$parsed_landing_ip:$parsed_landing_port"
-    _kv "中继客户端UUID:" "$client_uuid"
-    echo
-    _info "已为主配置注入 relay-out 出站及 relay routing 优先规则（经落地流量跳过线路机分流阻断）。"
-    _info "您可以在主菜单【2. 查看客户端配置】中选择【经落地】生成落地节点配置。"
-    echo
-}
-
-relay_remove_line() {
-    echo
-    _section "解除线路机绑定"
-    if ! prompt_confirm "确认解除与当前落地机的绑定吗？" "n"; then
-        return
-    fi
-
-    relay_backup
-
-    relay_delete_state
-    relay_remove_client_identity
-    rebuild_main_config
-
-    if ! relay_validate_config; then
-        relay_restore
-        return 1
-    fi
-
-    if ! relay_restart_safe; then
-        relay_restore
-        return 1
-    fi
-
-    relay_cleanup_backup
-
-    echo
-    _line
-    _ok "已成功解除线路机绑定！"
-    _line
-    echo
-    _info "所有公网节点已恢复为仅本机直出模式，relay-out 与中继路由规则已清除。"
-    echo
-    echo -e "  ${yellow}【提示】本操作只修改当前 VPS。如需彻底解除关系，请在另一端（落地机）同步删除中继配置。${none}"
-    echo
-}
-
-relay_remove_landing() {
-    echo
-    _section "解除落地机配置"
-    if ! prompt_confirm "确认解除落地机中继配置吗？" "n"; then
-        return
-    fi
-
-    local peer_ip=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
-    local listen_port=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
-
-    relay_backup
-
-    relay_remove_landing_inbound
-    relay_delete_state
-
-    if ! relay_validate_config; then
-        relay_restore
-        return 1
-    fi
-
-    if [[ -n "$peer_ip" && -n "$listen_port" ]]; then
-        relay_close_firewall "$peer_ip" "$listen_port"
-    fi
-
-    if ! relay_restart_safe; then
-        relay_open_firewall "$peer_ip" "$listen_port"
-        relay_restore
-        return 1
-    fi
-
-    relay_cleanup_backup
-
-    echo
-    _line
-    _ok "已成功解除落地机中继配置！"
-    _line
-    echo
-    _info "已删除 99_relay_in.json 并关闭防火墙端口放行规则，本机直连节点保持正常工作。"
-    echo
-    echo -e "  ${yellow}【提示】本操作只修改当前 VPS。如需彻底解除关系，请在另一端（线路机）同步删除中继配置。${none}"
-    echo
-}
-
-relay_test() {
+relay_test() (
     echo
     _section "中继连通性测试"
     local role=$(relay_get_role)
@@ -1724,6 +958,11 @@ relay_test() {
     local landing_port=$(jq -r '.landing_port // empty' "$is_relay_state_file")
     local transport_uuid=$(jq -r '.transport_uuid // empty' "$is_relay_state_file")
     local encryption=$(jq -r '.encryption // empty' "$is_relay_state_file")
+    relay_validate_ipv4 "$landing_ip" && relay_validate_port "$landing_port" &&
+        relay_validate_uuid "$transport_uuid" && relay_validate_vless_encryption "$encryption" || {
+        _fail "中继状态参数无效，请重新检查绑定配置"
+        return 1
+    }
 
     _step "正在执行基础 TCP 连通性测试 (${landing_ip}:${landing_port}) ..."
     local tcp_ok=0
@@ -1744,7 +983,7 @@ relay_test() {
     local candidate
     local attempt
     for (( attempt=0; attempt<30; attempt++ )); do
-        candidate=$(awk 'BEGIN{srand(); print int(30000 + rand() * 20001)}')
+        candidate=$((30000 + RANDOM % 20001))
         if [[ -z "$(is_test port_used $candidate)" ]]; then
             if ! (type -P ss &>/dev/null && ss -tunlp 2>/dev/null | grep -q ":${candidate}\b") && \
                ! (type -P netstat &>/dev/null && netstat -tunlp 2>/dev/null | grep -q ":${candidate}\b"); then
@@ -1757,7 +996,12 @@ relay_test() {
         _fail "无法获取未占用的临时测试端口"
         return 1
     fi
-    local tmp_test_cfg="/tmp/relay_test_$$.json"
+    local test_dir tmp_test_cfg test_pid=""
+    test_dir=$(mktemp -d) || return 1
+    tmp_test_cfg="$test_dir/config.json"
+    trap '[[ -z "$test_pid" ]] || { kill "$test_pid" 2>/dev/null; wait "$test_pid" 2>/dev/null; }; rm -rf "$test_dir"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 
     cat <<EOF >"$tmp_test_cfg"
 {
@@ -1801,15 +1045,15 @@ relay_test() {
 EOF
 
     $is_core_bin run -c "$tmp_test_cfg" &>/dev/null &
-    local test_pid=$!
+    test_pid=$!
     sleep 2
 
     local exit_ip=""
     exit_ip=$(curl -s --socks5 "127.0.0.1:$test_socks_port" --max-time 6 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
 
     kill $test_pid &>/dev/null
-    wait $test_pid 2>/dev/null
-    rm -f "$tmp_test_cfg"
+    wait "$test_pid" 2>/dev/null || true
+    test_pid=""
 
     if [[ "$exit_ip" == "$landing_ip" ]]; then
         _ok "完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
@@ -1818,7 +1062,7 @@ EOF
     else
         _fail "完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
     fi
-}
+)
 
 relay_view_info_line() {
     echo
@@ -1911,7 +1155,7 @@ relay_menu() {
             _menu 2 "将本机配置为落地机"
             echo
             echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回主菜单${none}]: "
-            read REPLY
+            read -r REPLY || return 1
             [[ "$REPLY" == "0" ]] && return
             case $REPLY in
             1)
@@ -1935,7 +1179,7 @@ relay_menu() {
             _menu 3 "解除线路绑定"
             echo
             echo -ne "  请选择 [${green}1-3${none}] [${red}0 返回主菜单${none}]: "
-            read REPLY
+            read -r REPLY || return 1
             [[ "$REPLY" == "0" ]] && return
             case $REPLY in
             1)
@@ -1963,7 +1207,7 @@ relay_menu() {
             _menu 2 "解除落地配置"
             echo
             echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回主菜单${none}]: "
-            read REPLY
+            read -r REPLY || return 1
             [[ "$REPLY" == "0" ]] && return
             case $REPLY in
             1)
@@ -1983,23 +1227,15 @@ relay_menu() {
 change() {
     is_change=1
     is_dont_show_info=1
-    [[ $is_dont_auto_exit ]] && {
-        get info $1
-    } || {
+    {
         [[ $is_change_id ]] && {
             is_change_msg=${change_list[$is_change_id]}
-            [[ $is_change_id == 'full' ]] && {
-                [[ $3 ]] && is_change_msg="更改多个参数" || is_change_msg=
-            }
             [[ $is_change_msg ]] && _step "快速执行: $is_change_msg"
         }
         info $1
         [[ $is_auto_get_config ]] && _info "自动选择: $is_config_file"
     }
-    is_old_net=$net
-    [[ $host ]] && net=$is_protocol-$net-tls
-    [[ $is_reality ]] && net=reality
-    [[ $is_dynamic_port ]] && net=${net}d
+    net=reality
     # if is_dont_show_info exist, cant show info.
     is_dont_show_info=
     
@@ -2010,15 +1246,10 @@ change() {
         change_list[8]="切换分离类型 (当前: v4上行/v6下行)"
     fi
     # show current outbound strategy in menu
-    local _cur_out_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' "$is_config_json" 2>/dev/null)
-    local _cur_out_label="双栈优选"
-    case "$_cur_out_strategy" in
-        UseIPv4) _cur_out_label="v4优先" ;;
-        UseIPv6|UseIPv6v4) _cur_out_label="v6优先" ;;
-        UseIPv4v6) _cur_out_label="双栈优选" ;;
-    esac
-    change_list[10]="切换出站 IP 优先 (当前: $_cur_out_label)"
-    
+    local _cur_out_strategy
+    _cur_out_strategy=$(outbound_strategy)
+    change_list[10]="修改出站解析 / 双栈连接竞速"
+
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {
         ask set_change_list
@@ -2026,9 +1257,6 @@ change() {
         is_change_id=${is_can_change[$REPLY - 1]}
     }
     case $is_change_id in
-    full)
-        add $net ${@:3}
-        ;;
     0)
         # new port
         is_new_port=$3
@@ -2056,11 +1284,7 @@ change() {
             return
         fi
         
-        close_port $port
-        _ok "已关闭旧端口防火墙规则: $port"
-        
-        add $net $is_new_port
-        _ok "已放行新端口防火墙规则: $is_new_port"
+        add "$net" "$is_new_port"
         ;;
     1)
         # new xhttp path
@@ -2069,11 +1293,12 @@ change() {
         [[ ! $is_new_v4_path ]] && ask string is_new_v4_path "  请输入新 xhttp 路径:"
         [[ $REPLY == "0" ]] && return
         v4_path=$is_new_v4_path
-        add $net
+        add "$net"
         ;;
     2)
         # new uuid
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
+        _info "UUID 更新后，现有客户端需要重新导入配置。"
         get_uuid
         is_new_uuid=$tmp_uuid
         add $net auto $is_new_uuid
@@ -2081,8 +1306,9 @@ change() {
     3)
         # new is_private_key is_public_key
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
+        _info "密钥更新后，现有客户端需要重新导入配置。"
         get_pbk
-        add $net
+        add "$net"
         ;;
     4)
         # new v4 sni/dest
@@ -2091,7 +1317,7 @@ change() {
         [[ ! $is_new_v4_sni ]] && ask string is_new_v4_sni "  请输入新的 v4 目标域名 (SNI/Dest) [0 返回]:"
         [[ $REPLY == "0" ]] && return
         v4_sni=$is_new_v4_sni
-        add $net
+        add "$net"
         ;;
     5)
         # new v6 sni/dest
@@ -2100,203 +1326,59 @@ change() {
         [[ ! $is_new_v6_sni ]] && ask string is_new_v6_sni "  请输入新的 v6 目标域名 (SNI/Dest) [0 返回]:"
         [[ $REPLY == "0" ]] && return
         v6_sni=$is_new_v6_sni
-        add $net
+        add "$net"
         ;;
     6)
         # new v4 short ids
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_short_ids
         v4_short_ids=$is_short_ids
-        add $net
+        add "$net"
         ;;
     7)
         # new v6 short ids
         [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
         get_short_ids
         v6_short_ids=$is_short_ids
-        add $net
+        add "$net"
         ;;
     8)
-        # toggle route mode
-        [[ ! $is_reality ]] && err "($is_config_file) 不支持此更改"
-        if [[ -f $is_conf_dir/is_v6_uplink ]]; then
-            rm -f $is_conf_dir/is_v6_uplink
-            unset is_v6_uplink
-            _ok "分离类型已切换为: v4上行/v6下行"
-        else
-            touch $is_conf_dir/is_v6_uplink
-            export is_v6_uplink=1
-            _ok "分离类型已切换为: v6上行/v4下行"
-        fi
-        add $net
+        config_transaction toggle_route_mode
         ;;
     9)
         manage_custom_rules
         ;;
     10)
-        # switch outbound IP priority
-        echo
-        ask list ip_pref "v4优先(UseIPv4) v6优先(UseIPv6) 双栈优选(UseIPv4v6)" "\n  当前出站策略为: $_cur_out_label ($_cur_out_strategy)\n  请选择新的出站 IP 优先策略:"
-        [[ $REPLY == "0" ]] && return
-        local new_strategy="UseIPv4v6"
-        case $REPLY in
-        1) new_strategy="UseIPv4" ;;
-        2) new_strategy="UseIPv6" ;;
-        3) new_strategy="UseIPv4v6" ;;
-        esac
-        jq '(.outbounds[] | select(.tag=="direct") | .settings.domainStrategy) = "'$new_strategy'"' "$is_config_json" > "${is_config_json}.tmp" && mv -f "${is_config_json}.tmp" "$is_config_json"
-        _ok "已切换出站 IP 优先为: $new_strategy"
-        manage restart &
-        sleep 1
-        _ok "配置已更新并重启 Xray"
+        choose_outbound_strategy
         ;;
     esac
-}
-
-# delete config.
-del() {
-    # dont get ip
-    is_dont_get_ip=1
-    [[ $is_conf_dir_empty ]] && return # not found any json file.
-    # get a config file
-    [[ ! $is_config_file ]] && get info $1
-    if [[ $is_config_file ]]; then
-        api del $is_conf_dir/"$is_config_file" $is_dynamic_port_file &>/dev/null
-        rm -rf $is_conf_dir/"$is_config_file" $is_dynamic_port_file
-        [[ $is_api_fail && ! $is_new_json ]] && manage restart &
-        [[ ! $is_no_del_msg ]] && _ok "已删除: $is_config_file"
-    fi
-    if [[ ! $(list_managed_node_configs) && ! $is_change ]]; then
-        warn "当前配置目录为空! 因为你刚刚删除了最后一个配置文件"
-        is_conf_dir_empty=1
-    fi
-    unset is_dont_get_ip
-    [[ $is_dont_auto_exit ]] && unset is_config_file
 }
 
 # uninstall
-uninstall() {
-    echo
-    ask string y "  确认卸载 ${is_core_name}? [y]:"
-    [[ $REPLY == "0" ]] && return
-    
-    _step "正在停止 $is_core_name 服务..."
-    manage stop &>/dev/null
-    manage disable &>/dev/null
-
-    # Close relay firewall if role == landing
-    if [[ -f $is_relay_state_file ]]; then
-        local r_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
-        if [[ "$r_role" == "landing" ]]; then
-            local r_peer=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
-            local r_port=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
-            if [[ -n "$r_peer" && -n "$r_port" ]]; then
-                relay_close_firewall "$r_peer" "$r_port"
-                _ok "已关闭中继防火墙端口: $r_peer -> $r_port"
-            fi
-        fi
+uninstall() (
+    prompt_confirm "确认卸载 Xray 及本脚本的配置与日志？" n || return 1
+    exec {operation_fd}>"$is_core_dir/.operation.lock" || return 1
+    flock -n "$operation_fd" || { _fail "另一项配置或更新操作正在进行，请稍后卸载"; return 1; }
+    manage stop && manage disable || return 1
+    systemctl disable --now xray-geodata.timer xray-firewall.service >/dev/null 2>&1 || true
+    remove_legacy_geodata_cron || return 1
+    firewall_remove || return 1
+    local root="${XRAY_SYSTEMD_DIR:-/etc/systemd/system}" temporary
+    rm -f "$root/xray-firewall.service" "$root/xray-geodata.service" "$root/xray-geodata.timer" "$root/$is_core.service.d/firewall.conf"
+    rmdir "$root/$is_core.service.d" 2>/dev/null || true
+    rm -f "${XRAY_LOGROTATE_DIR:-/etc/logrotate.d}/xray-script"
+    rm -f /etc/sysctl.d/99-xray-bbr.conf
+    if [[ -f /root/.bashrc ]]; then
+        temporary=$(mktemp) || return 1
+        awk -v entry="alias $is_core=$is_sh_bin" '$0 != entry {print}' /root/.bashrc > "$temporary" &&
+            cat "$temporary" > /root/.bashrc
+        rm -f "$temporary"
     fi
-    
-    # Close all opened ports before deleting config
-    if [[ -d $is_conf_dir ]]; then
-        for v in $(list_managed_node_configs); do
-            local p=$(jq -r '.inbounds[0].port' $is_conf_dir/"$v")
-            if [[ $(is_test port $p) ]]; then
-                close_port $p
-                _ok "已关闭防火墙端口: $p"
-            fi
-        done
-    fi
-
-    _step "正在清理文件..."
-    rm -rf $is_core_dir $is_log_dir $is_sh_bin /lib/systemd/system/$is_core.service /etc/init.d/$is_core
-    sed -i "/$is_core/d" /root/.bashrc
-    systemctl daemon-reload &>/dev/null
-    
-    echo
-    _ok "$is_core_name 卸载完成"
-    _info "脚本哪里需要完善? 请反馈"
-    _info "反馈问题: $(msg_ul https://github.com/${is_sh_repo}/issues)"
-    echo
-}
-
-# manage run status
-manage() {
-    [[ $is_dont_auto_exit ]] && return
-    case $1 in
-    1 | start)
-        is_do=start
-        is_do_msg=启动
-        is_test_run=1
-        ;;
-    2 | stop)
-        is_do=stop
-        is_do_msg=停止
-        ;;
-    3 | r | restart)
-        is_do=restart
-        is_do_msg=重启
-        is_test_run=1
-        ;;
-    *)
-        is_do=$1
-        is_do_msg=$1
-        ;;
-    esac
-    is_do_name=$is_core
-    is_run_bin=$is_core_bin
-    is_do_name_msg=$is_core_name
-    systemctl $is_do $is_do_name
-    [[ $is_test_run && ! $is_new_install ]] && {
-        sleep 2
-        if [[ ! $(pgrep -f $is_run_bin) ]]; then
-            is_run_fail=${is_do_name_msg,,}
-            [[ ! $is_no_manage_msg ]] && {
-                echo
-                _fail "($is_do_msg) $is_do_name_msg 失败"
-                _info "检测到运行失败, 自动执行测试运行..."
-                get test-run
-                _info "测试结束, 请按 Enter 退出"
-            }
-        fi
-    }
-}
-
-# use api add or del inbounds
-api() {
-    [[ ! $1 ]] && err "无法识别 API 的参数"
-    [[ $is_core_stop ]] && {
-        warn "$is_core_name 当前处于停止状态"
-        is_api_fail=1
-        return
-    }
-    case $1 in
-    add)
-        is_api_do=adi
-        ;;
-    del)
-        is_api_do=rmi
-        ;;
-    s)
-        is_api_do=stats
-        ;;
-    t | sq)
-        is_api_do=statsquery
-        ;;
-    esac
-    [[ ! $is_api_do ]] && is_api_do=$1
-    [[ ! $is_api_port ]] && {
-        is_api_port=$(jq '.inbounds[] | select(.tag == "api") | .port' $is_config_json)
-        [[ $? != 0 ]] && {
-            warn "读取 API 端口失败, 无法使用 API 操作"
-            return
-        }
-    }
-    $is_core_bin api $is_api_do --server=127.0.0.1:$is_api_port ${@:2}
-    [[ $? != 0 ]] && {
-        is_api_fail=1
-    }
-}
+    rm -rf "${is_core_dir:?}" "${is_log_dir:?}"
+    rm -f "$is_sh_bin" "/lib/systemd/system/$is_core.service" "/etc/init.d/$is_core"
+    systemctl daemon-reload || return 1
+    _ok "卸载完成，系统其他防火墙规则保持原样"
+)
 
 # add a config
 add() {
@@ -2346,10 +1428,10 @@ add() {
     fi
 
     # create json
-    create server $is_new_protocol
+    create server "$is_new_protocol" || return 1
 
     # show config info.
-    info
+    [[ $is_new_install ]] || return 0
 }
 
 # get config info
@@ -2361,7 +1443,7 @@ get() {
         [[ ! $is_addr ]] && {
             get_ip
             is_addr=$ip
-            [[ $(grep ":" <<<$ip) ]] && is_addr="[$ip]"
+
         }
         ;;
     new)
@@ -2373,15 +1455,18 @@ get() {
         if [[ $is_new_install ]]; then
             is_default_arg="v4上行/v6下行"
             ask list is_route_mode "v4上行/v6下行 v6上行/v4下行" "\n  请选择首选的流向模式:" "  请选择 (默认: v4上行/v6下行):"
+            [[ $REPLY != 0 ]] || return 1
             if [[ $is_route_mode == "v6上行/v4下行" ]]; then
                 export is_v6_uplink=1
-                touch $is_conf_dir/is_v6_uplink
+                touch "$is_conf_dir/is_v6_uplink"
             fi
             is_default_arg="empty_allowed"
             ask string is_new_v4_sni "  请输入 v4 目标域名 (SNI/Dest) [直接回车使用默认]:"
+            [[ $REPLY != 0 ]] || return 1
             [[ $is_new_v4_sni ]] && export v4_sni=$is_new_v4_sni
             is_default_arg="empty_allowed"
             ask string is_new_v6_sni "  请输入 v6 目标域名 (SNI/Dest) [直接回车使用默认]:"
+            [[ $REPLY != 0 ]] || return 1
             [[ $is_new_v6_sni ]] && export v6_sni=$is_new_v6_sni
         fi
         if [[ ! $v4_sni || ! $v6_sni ]]; then
@@ -2398,406 +1483,20 @@ get() {
         [[ ! $is_all_json ]] && err "无法找到相关的配置文件: $2"
         [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=${is_all_json[0]} && is_auto_get_config=1
         [[ ! $is_config_file ]] && {
-            [[ $is_dont_auto_exit ]] && return
-            ask get_config_file
+                ask get_config_file
         }
         ;;
     info)
-        get file $2
-        if [[ $is_config_file ]]; then
-            is_json_str=$(cat $is_conf_dir/"$is_config_file")
-            
-            # v4 parsing
-            is_protocol=$(jq -r '.inbounds[0].protocol' <<<$is_json_str)
-            port=$(jq -r '.inbounds[0].port' <<<$is_json_str)
-            uuid=$(jq -r '.inbounds[0].settings.clients[0].id' <<<$is_json_str)
-            v4_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest' <<<$is_json_str)
-            v4_sni=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' <<<$is_json_str)
-            is_private_key=$(jq -r '.inbounds[0].streamSettings.realitySettings.privateKey' <<<$is_json_str)
-            is_public_key=$(jq -r '.inbounds[0].streamSettings.realitySettings.publicKey // ""' <<<$is_json_str)
-            v4_short_ids=$(jq -c '.inbounds[0].streamSettings.realitySettings.shortIds // [""]' <<<$is_json_str)
-            
-            # fallback for older generated config without publicKey in json
-            if [[ ! $is_public_key ]]; then
-                is_public_key="Unknown(please regenerate config)"
-            fi
-            
-            # v6 parsing
-            v6_dest=$(jq -r '.inbounds[1].streamSettings.realitySettings.dest // ""' <<<$is_json_str)
-            v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$is_json_str)
-            v6_short_ids=$(jq -c '.inbounds[1].streamSettings.realitySettings.shortIds // [""]' <<<$is_json_str)
-            
-            # xhttp parsing
-            v4_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$is_json_str)
-            v6_path=$v4_path
-            
-            # core variables
-            net=reality
-            is_reality=reality
-            is_config_name=$is_config_file
-        fi
+        get file "$2" || return 1
+        [[ -n "$is_config_file" ]] || return 1
+        load_node_info
         ;;
-    log | logerr)
-        echo
-        _info "按 ${green}Enter${none} 返回主菜单, 或 ${red}Ctrl+C${none} 退出脚本"
-        echo
-        trap "exit 0" INT
-        if [[ $1 == 'log' ]]; then
-            tail -f $is_log_dir/access.log $is_log_dir/error.log &
-        else
-            tail -f $is_log_dir/error.log &
-        fi
-        local tail_pid=$!
-        read -rs -d $'\n'
-        kill $tail_pid &>/dev/null
-        trap - INT
-        ;;
-    test-run)
-        systemctl list-units --full -all &>/dev/null
-        [[ $? != 0 ]] && {
-            _fail "无法执行测试, 请检查 systemctl 状态"
-            return
-        }
-        is_no_manage_msg=1
-        if [[ ! $(pgrep -f $is_core_bin) ]]; then
-            _step "测试运行 $is_core_name ..."
-            manage start &>/dev/null
-            if [[ $is_run_fail == $is_core ]]; then
-                _fail "$is_core_name 运行失败，错误信息:"
-                echo
-                $is_core_bin run -c $is_config_json -confdir $is_conf_dir
-            else
-                _ok "测试通过, 已启动 $is_core_name"
-            fi
-        else
-            _ok "$is_core_name 正在运行, 跳过测试"
-        fi
-        ;;
+
     esac
 }
 
 # show info
-info() {
-    is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
-    if [[ ! $is_protocol ]]; then
-        get info $1
-    fi
-    [[ $is_dont_show_info || $is_dont_auto_exit ]] && return # dont show info
-    
-    get addr
-    is_color=41
 
-    # Check relay role and prompt outbound choice if line VPS
-    local active_uuid=$uuid
-    local outbound_mode="direct"
-    local role=$(relay_get_role)
-    if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
-        local r_landing_ip=$(jq -r '.landing_ip // empty' "$is_relay_state_file" 2>/dev/null)
-        local r_client_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file" 2>/dev/null)
-        if [[ -n "$r_landing_ip" && -n "$r_client_uuid" ]]; then
-            echo
-            ask list is_outbound_choice "本机直出 经落地(${r_landing_ip})" "\n  请选择出口:"
-            [[ $REPLY == "0" ]] && return
-            if [[ $REPLY == 2 ]]; then
-                active_uuid=$r_client_uuid
-                outbound_mode="landing"
-            fi
-        fi
-    fi
-
-    # get active shortId (v4 uses [0], v6 uses [1] to ensure different SIDs in split mode)
-    is_v4_sid=$(jq -r '.[0] // ""' <<<$v4_short_ids)
-    [[ "$is_v4_sid" == "null" ]] && is_v4_sid=""
-    is_v6_sid=$(jq -r '.[1] // .[0] // ""' <<<$v6_short_ids)
-    [[ "$is_v6_sid" == "null" ]] && is_v6_sid=""
-    
-    v4_url="$is_protocol://$active_uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v4_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v4_sid}#233boy-v4-$is_addr"
-    v6_url="$is_protocol://$active_uuid@$is_addr:$port?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${v6_sni}&pbk=$is_public_key&fp=chrome&sid=${is_v6_sid}#233boy-v6-$is_addr"
-
-    get_ipv6
-    v6_ip=${ipv6:-""}
-
-    [[ -f $is_conf_dir/is_v6_uplink ]] && is_v6_uplink=1
-    
-    if [[ $is_v6_uplink ]]; then
-        uplink_ip=$v6_ip
-        uplink_sni=$v6_sni
-        uplink_sid=$is_v6_sid
-        downlink_ip=$is_addr
-        downlink_sni=$v4_sni
-        downlink_sid=$is_v4_sid
-    else
-        uplink_ip=$is_addr
-        uplink_sni=$v4_sni
-        uplink_sid=$is_v4_sid
-        downlink_ip=$v6_ip
-        downlink_sni=$v6_sni
-        downlink_sid=$is_v6_sid
-    fi
-
-    echo
-    ask list is_deploy_mode "XHTTP双栈分离 XHTTP单栈 仅VisionReality" "\n  请选择部署模式:"
-    [[ $REPLY == "0" ]] && return
-
-    if [[ $is_deploy_mode == "仅VisionReality" ]]; then
-        # ask which SNI for vision-only
-        echo
-        ask list is_vision_sni_choice "v4-SNI($v4_sni) v6-SNI($v6_sni)" "\n  请选择 SNI:"
-        [[ $REPLY == "0" ]] && return
-        if [[ $REPLY == 1 ]]; then
-            local vision_sni=$v4_sni
-            local vision_sid=$is_v4_sid
-            local vision_ip=$is_addr
-            local vision_addr=$is_addr
-        else
-            local vision_sni=$v6_sni
-            local vision_sid=$is_v6_sid
-            local vision_ip=$v6_ip
-            local vision_addr=$v6_ip
-        fi
-        [[ "$vision_addr" == *:* ]] && vision_addr="[$vision_addr]"
-    elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
-        # ask which SNI for single stack
-        echo
-        ask list is_single_sni_choice "v4-SNI($v4_sni) v6-SNI($v6_sni)" "\n  请选择 SNI:"
-        [[ $REPLY == "0" ]] && return
-        if [[ $REPLY == 1 ]]; then
-            local single_sni=$v4_sni
-            local single_sid=$is_v4_sid
-            local single_ip=$is_addr
-            local single_addr=$is_addr
-        else
-            local single_sni=$v6_sni
-            local single_sid=$is_v6_sid
-            local single_ip=$v6_ip
-            local single_addr=$v6_ip
-        fi
-        [[ "$single_addr" == *:* ]] && single_addr="[$single_addr]"
-    fi
-
-    echo
-    ask list is_output_format "Mihomo配置 VLESS链接" "\n  请选择输出格式:"
-    [[ $REPLY == "0" ]] && return
-
-    if [[ $is_deploy_mode == "XHTTP双栈分离" ]]; then
-        # ── XHTTP split mode ──
-        local split_name="${is_config_name} (XHTTP-Split)"
-        local split_tag="Premium-Split"
-        if [[ "$outbound_mode" == "landing" ]]; then
-            split_name="${is_config_name} (XHTTP-Split-Landing)"
-            split_tag="Premium-Split-Landing"
-        fi
-
-        if [[ $is_output_format == "Mihomo配置" ]]; then
-            cat <<EOF
-- name: $split_name
-  type: vless
-  server: "$uplink_ip"
-  port: $port
-  uuid: $active_uuid
-  network: xhttp
-  tls: true
-  udp: true
-  tfo: true
-  mptcp: true
-  packet-encoding: xudp
-  encryption: none
-  servername: $uplink_sni
-  client-fingerprint: chrome
-  alpn:
-    - h2
-  reality-opts:
-    public-key: $is_public_key
-    short-id: $uplink_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
-  xhttp-opts:
-    mode: stream-up
-    host: $uplink_sni
-    path: $v4_path
-    uplink-http-method: PUT
-    no-grpc-header: true
-    x-padding-bytes: "100-1000"
-    x-padding-obfs-mode: true
-    x-padding-placement: queryInHeader
-    x-padding-method: tokenish
-    x-padding-key: x_padding
-    x-padding-header: Referer
-    session-placement: path
-    seq-placement: path
-    reuse-settings:
-      max-concurrency: "16-32"
-      c-max-reuse-times: 0
-      h-max-request-times: "600-900"
-      h-max-reusable-secs: "1800-3000"
-      h-keep-alive-period: 0
-    download-settings:
-      server: "$downlink_ip"
-      port: $port
-      tls: true
-      alpn:
-        - h2
-      servername: $downlink_sni
-      client-fingerprint: firefox
-      reality-opts:
-        public-key: $is_public_key
-        short-id: $downlink_sid
-      no-grpc-header: true
-      host: $downlink_sni
-      path: $v4_path
-      x-padding-bytes: "100-1000"
-      x-padding-obfs-mode: true
-      x-padding-placement: queryInHeader
-      x-padding-method: tokenish
-      x-padding-key: x_padding
-      x-padding-header: Referer
-      session-placement: path
-      seq-placement: path
-      sockopt:
-        tcp-fast-open: true
-        tcp-no-delay: true
-        tcp-mptcp: true
-      reuse-settings:
-        max-concurrency: "8-16"
-        c-max-reuse-times: 0
-        h-max-request-times: "300-600"
-        h-max-reusable-secs: "2400-3600"
-        h-keep-alive-period: 0
-EOF
-        else
-            # generate XHTTP Split VLESS link
-            local extra_split_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
-            local encoded_extra_split=$(printf '%s' "$extra_split_json" | jq -Rr @uri | tr -d '\n')
-            local server_addr="$uplink_ip"
-            [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
-            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_split="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#${split_tag}"
-            
-            echo
-            _step "VLESS 分享链接 (XHTTP 分离):"
-            echo
-            printf '%s\n' "$vless_link_split"
-        fi
-    elif [[ $is_deploy_mode == "XHTTP单栈" ]]; then
-        # ── XHTTP single mode ──
-        local single_name="${is_config_name} (XHTTP-Single)"
-        local single_tag="Premium-Single"
-        if [[ "$outbound_mode" == "landing" ]]; then
-            single_name="${is_config_name} (XHTTP-Single-Landing)"
-            single_tag="Premium-Single-Landing"
-        fi
-
-        if [[ $is_output_format == "Mihomo配置" ]]; then
-            cat <<EOF
-- name: $single_name
-  type: vless
-  server: "$single_ip"
-  port: $port
-  uuid: $active_uuid
-  network: xhttp
-  tls: true
-  udp: true
-  tfo: true
-  mptcp: true
-  packet-encoding: xudp
-  encryption: none
-  servername: $single_sni
-  client-fingerprint: chrome
-  alpn:
-    - h2
-  reality-opts:
-    public-key: $is_public_key
-    short-id: $single_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
-  xhttp-opts:
-    mode: stream-up
-    host: $single_sni
-    path: $v4_path
-    uplink-http-method: PUT
-    no-grpc-header: true
-    x-padding-bytes: "100-1000"
-    x-padding-obfs-mode: true
-    x-padding-placement: queryInHeader
-    x-padding-method: tokenish
-    x-padding-key: x_padding
-    x-padding-header: Referer
-    session-placement: path
-    seq-placement: path
-    reuse-settings:
-      max-concurrency: "16-32"
-      c-max-reuse-times: 0
-      h-max-request-times: "600-900"
-      h-max-reusable-secs: "1800-3000"
-      h-keep-alive-period: 0
-EOF
-        else
-            # generate XHTTP Single VLESS link
-            local extra_single_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0}}"
-            local encoded_extra_single=$(printf '%s' "$extra_single_json" | jq -Rr @uri | tr -d '\n')
-            local server_addr="$single_ip"
-            [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
-            local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_single="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#${single_tag}"
-            
-            echo
-            _step "VLESS 分享链接 (XHTTP 单栈):"
-            echo
-            printf '%s\n' "$vless_link_single"
-        fi
-    else
-        # ── Vision Reality only mode ──
-        local vision_name="Vision-Reality"
-        local vision_tag="Premium"
-        if [[ "$outbound_mode" == "landing" ]]; then
-            vision_name="Vision-Reality-Landing"
-            vision_tag="Premium-Landing"
-        fi
-
-        if [[ $is_output_format == "Mihomo配置" ]]; then
-            cat <<EOF
-- name: $vision_name
-  type: vless
-  server: "$vision_ip"
-  port: $port
-  uuid: $active_uuid
-  network: tcp
-  tls: true
-  udp: true
-  tfo: true
-  mptcp: true
-  packet-encoding: xudp
-  encryption: none
-  flow: xtls-rprx-vision
-  servername: $vision_sni
-  client-fingerprint: chrome
-  reality-opts:
-    public-key: $is_public_key
-    short-id: $vision_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
-EOF
-        else
-            # generate Vision Reality VLESS link
-            local vless_link="vless://${active_uuid}@${vision_addr}:${port}?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${vision_sni}&fp=chrome&pbk=${is_public_key}&sid=${vision_sid}#${vision_tag}"
-            
-            echo
-            _step "VLESS 分享链接 (Vision Reality):"
-            echo
-            printf '%s\n' "$vless_link"
-        fi
-    fi
-    
-    is_url="$v4_url\n$v6_url" # for url_qr compatibility
-
-    footer_msg
-}
 
 # footer msg
 footer_msg() {
@@ -2806,505 +1505,16 @@ footer_msg() {
 
 # update core, sh
 update() {
-    case $1 in
-    1 | core | $is_core)
-        is_update_name=core
-        is_show_name=$is_core_name
-        is_run_ver=v${is_core_ver##* }
-        is_update_repo=$is_core_repo
-        ;;
-    2 | sh)
-        is_update_name=sh
-        is_show_name="$is_core_name 脚本"
-        is_run_ver=$is_sh_ver
-        is_update_repo=$is_sh_repo
-        ;;
-    *)
-        err "无法识别 ($1), 请使用: $is_core update [core | sh] [ver]"
-        ;;
-    esac
-    [[ $2 ]] && is_new_ver=v${2#v}
-    [[ $is_run_ver == $is_new_ver ]] && {
-        _info "自定义版本和当前 $is_show_name 版本一样, 无需更新"
-        return
-    }
     load download.sh
-    if [[ $is_new_ver ]]; then
-        _step "使用自定义版本更新 $is_show_name: $(_green $is_new_ver)"
-    else
-        get_latest_version $is_update_name
-        is_new_ver=$latest_ver
-        [[ $is_run_ver == $is_new_ver ]] && {
-            _ok "当前 $is_show_name 已是最新版本: $(_green $is_run_ver)"
-            return
-        }
-        _step "发现 $is_show_name 新版本: $(_green $is_new_ver)"
+    local kind="$1" requested="${2:-}"
+    [[ $kind != 1 ]] || kind=core
+    [[ $kind != 2 ]] || kind=sh
+    safe_update "$kind" "$requested" || return 1
+    if [[ $kind == sh ]]; then
+        _ok "脚本更新成功，重新打开菜单"
+        exec "$is_sh_bin"
     fi
-    _step "正在下载更新..."
-    download $is_update_name $is_new_ver
-    _ok "$is_show_name 更新成功: $(_green $is_new_ver)"
-    [[ $is_update_name == 'core' ]] && {
-        manage restart
-        is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f1-2)
-        _ok "$is_core_name 已重启"
-    }
-    [[ $is_update_name == 'sh' ]] && {
-        _ok "脚本已更新，正在重新加载..."
-        sleep 1
-        exec $is_sh_bin
-    }
+    is_core_ver=$("$is_core_bin" version | awk 'NR==1 {print $2}')
 }
 
 # reset state variables between menu operations
-_reset_state() {
-    unset is_protocol is_config_file is_config_name is_json_str
-    unset net is_reality is_old_net is_dynamic_port
-    unset port uuid is_private_key is_public_key
-    unset v4_sni v6_sni v4_dest v6_dest v4_path v6_path
-    unset v4_short_ids v6_short_ids
-    unset is_change is_change_id is_change_msg is_dont_show_info
-    unset is_auto_get_config is_no_del_msg is_new_json
-    unset is_addr is_v4_sid is_v6_sid is_v6_uplink
-    unset host is_conf_dir_empty
-    unset is_api_fail is_run_fail is_no_manage_msg
-    unset is_core_stop
-    unset _ov_relay_status _ov_relay_role _ov_relay_warn
-
-    # re-check core status
-    if [[ $(pgrep -f $is_core_bin) ]]; then
-        is_core_status="${green}● 运行中${none}"
-        is_core_status_short="${green}运行中${none}"
-    else
-        is_core_status="${red}● 已停止${none}"
-        is_core_status_short="${red}已停止${none}"
-        is_core_stop=1
-    fi
-}
-
-_check_ip_blocked() {
-    if [[ $_ov_ip_blocked ]]; then
-        return
-    fi
-    _ov_ip_blocked="检测中..."
-    _ov_ip_warning=""
-    local check_urls=(
-        "sh-cm-dualstack.ip.zstaticcdn.com/80"
-        "sh-cu-dualstack.ip.zstaticcdn.com/80"
-        "sh-ct-dualstack.ip.zstaticcdn.com/80"
-    )
-    local is_blocked=1
-    for url in "${check_urls[@]}"; do
-        if timeout 2 bash -c "echo > /dev/tcp/$url" &>/dev/null; then
-            is_blocked=0
-            break
-        fi
-    done
-    if [[ $is_blocked == 0 ]]; then
-        _ov_ip_blocked="${green}✓${none} "
-    else
-        _ov_ip_blocked="${red}✗${none} "
-        _ov_ip_warning="  [警告] 当前服务器 IP 的部分国内测速节点超时，可能已被 GFW 阻断！\n"
-    fi
-}
-
-_check_sni_status() {
-    if [[ $_ov_sni_checked ]]; then
-        return
-    fi
-    _ov_sni_checked=1
-
-    _ov_v4_sni_status=""
-    _ov_v6_sni_status=""
-    _ov_v4_cdn_status=""
-    _ov_v6_cdn_status=""
-    _ov_sni_warning=""
-    _ov_cdn_warning=""
-
-    local v4_tmp="/tmp/.v4_sni_res_$$"
-    local v6_tmp="/tmp/.v6_sni_res_$$"
-
-    local pid_v4=""
-    local pid_v6=""
-
-    # 每个子 shell 同时检测 TLS 和 CDN，输出格式: TLS_OK|CDN_OK 或 TLS_FAIL|CDN:名称|归属
-    if [[ $_ov_v4_sni ]]; then
-        (
-            # ── TLS 检测 ──
-            tls_res="TLS_FAIL"
-            res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v4_sni" 2>&1)
-            if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                tls_res="TLS_OK"
-            fi
-            # ── CDN 检测（多 DNS 视角）──
-            cdn_res=$(_detect_cdn "$_ov_v4_sni")
-            echo "${tls_res}|${cdn_res}"
-        ) > "$v4_tmp" &
-        pid_v4=$!
-    fi
-
-    if [[ $_ov_v6_sni ]]; then
-        (
-            tls_res="TLS_FAIL"
-            res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v6_sni" 2>&1)
-            if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                tls_res="TLS_OK"
-            fi
-            # ── CDN 检测（多 DNS 视角）──
-            cdn_res=$(_detect_cdn "$_ov_v6_sni")
-            echo "${tls_res}|${cdn_res}"
-        ) > "$v6_tmp" &
-        pid_v6=$!
-    fi
-
-    [[ $pid_v4 ]] && wait $pid_v4
-    [[ $pid_v6 ]] && wait $pid_v6
-
-    # ── 解析 v4 结果 ──
-    if [[ $_ov_v4_sni && -f $v4_tmp ]]; then
-        local v4_raw=$(cat "$v4_tmp")
-        local v4_tls=${v4_raw%%|*}
-        local v4_cdn=${v4_raw#*|}
-        # TLS 状态
-        if [[ "$v4_tls" == "TLS_OK" ]]; then
-            _ov_v4_sni_status="${green}✓${none} "
-        else
-            _ov_v4_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
-        fi
-        # CDN 状态
-        case "$v4_cdn" in
-        CDN:*)
-            local v4_cdn_name=$(echo "$v4_cdn" | cut -d: -f2 | cut -d'|' -f1)
-            local v4_cdn_org=$(echo "$v4_cdn" | cut -d'|' -f2)
-            _ov_v4_cdn_status="${red}CDN${none} "
-            _ov_cdn_warning+="  [警告] v4 域名 ($_ov_v4_sni) 挂了 CDN（$v4_cdn_name: $v4_cdn_org），请更换域名！\n"
-            ;;
-        esac
-        rm -f "$v4_tmp"
-    fi
-
-    # ── 解析 v6 结果 ──
-    if [[ $_ov_v6_sni && -f $v6_tmp ]]; then
-        local v6_raw=$(cat "$v6_tmp")
-        local v6_tls=${v6_raw%%|*}
-        local v6_cdn=${v6_raw#*|}
-        # TLS 状态
-        if [[ "$v6_tls" == "TLS_OK" ]]; then
-            _ov_v6_sni_status="${green}✓${none} "
-        else
-            _ov_v6_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
-        fi
-        # CDN 状态
-        case "$v6_cdn" in
-        CDN:*)
-            local v6_cdn_name=$(echo "$v6_cdn" | cut -d: -f2 | cut -d'|' -f1)
-            local v6_cdn_org=$(echo "$v6_cdn" | cut -d'|' -f2)
-            _ov_v6_cdn_status="${red}CDN${none} "
-            _ov_cdn_warning+="  [警告] v6 域名 ($_ov_v6_sni) 挂了 CDN（$v6_cdn_name: $v6_cdn_org），请更换域名！\n"
-            ;;
-        esac
-        rm -f "$v6_tmp"
-    fi
-}
-
-# get overview info for main menu
-_get_overview() {
-    _check_ip_blocked
-    _ov_port=""
-    _ov_v4_sni=""
-    _ov_v6_sni=""
-    _ov_route_mode=""
-    _ov_log_level=""
-    _ov_fw_ports=""
-    _ov_sys_ports=""
-    _ov_v4_sids=""
-    _ov_v6_sids=""
-    _ov_path=""
-    _ov_pbk=""
-    _ov_uuid=""
-
-    # parse first config file
-    if [[ -d $is_conf_dir ]]; then
-        local first_json=$(list_managed_node_configs | head -1)
-        if [[ $first_json && -f $is_conf_dir/$first_json ]]; then
-            local json_str=$(cat $is_conf_dir/$first_json)
-            _ov_port=$(jq -r '.inbounds[0].port // ""' <<<$json_str 2>/dev/null)
-            _ov_v4_sni=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
-            _ov_v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$json_str 2>/dev/null)
-            
-            _ov_v4_sids=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds | join(",") // ""' <<<$json_str 2>/dev/null)
-            _ov_v6_sids=$(jq -r '.inbounds[1].streamSettings.realitySettings.shortIds | join(",") // ""' <<<$json_str 2>/dev/null)
-            _ov_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$json_str 2>/dev/null)
-            _ov_pbk=$(jq -r '.inbounds[0].streamSettings.realitySettings.publicKey // ""' <<<$json_str 2>/dev/null)
-            _ov_uuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' <<<$json_str 2>/dev/null)
-
-        fi
-    fi
-
-    # route mode
-    if [[ -f $is_conf_dir/is_v6_uplink ]]; then
-        _ov_route_mode="v6上行/v4下行"
-    else
-        _ov_route_mode="v4上行/v6下行"
-    fi
-
-    # log & outbound strategy
-    if [[ -f $is_config_json ]]; then
-        _ov_log_level=$(jq -r '.log.loglevel // "unknown"' $is_config_json 2>/dev/null)
-        _ov_outbound_strategy=$(jq -r '.outbounds[] | select(.tag=="direct") | .settings.domainStrategy // "UseIPv4v6"' "$is_config_json" 2>/dev/null)
-        _ov_outbound_pref="未知"
-        case "$_ov_outbound_strategy" in
-            UseIPv4) _ov_outbound_pref="v4优先" ;;
-            UseIPv6|UseIPv6v4) _ov_outbound_pref="v6优先" ;;
-            UseIPv4v6) _ov_outbound_pref="双栈优选" ;;
-        esac
-    fi
-
-    # firewall ports
-    local fw_ports_v4=""
-    if [[ $(type -P iptables) ]]; then
-        fw_ports_v4=$(iptables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
-    fi
-    local fw_ports_v6=""
-    if [[ $(type -P ip6tables) ]]; then
-        fw_ports_v6=$(ip6tables -nL INPUT 2>/dev/null | grep -w "ACCEPT" | grep -Eo 'dpt:[0-9]+' | cut -d: -f2 | sort -nu | xargs echo)
-    fi
-    _ov_fw_ports=$(echo "$fw_ports_v4 $fw_ports_v6" | tr ' ' '\n' | sort -nu | xargs echo | sed 's/ /, /g')
-    [[ ! $_ov_fw_ports ]] && _ov_fw_ports="无"
-
-    # system listening ports
-    local core_name=${is_core:-xray}
-    if [[ $(type -P ss) ]]; then
-        _ov_sys_ports=$(ss -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | awk -v core="$core_name" '
-            $1 ~ /^(tcp|udp)/ {
-                n = split($5, a, ":"); port = a[n];
-                if ($1 ~ /^udp/ && port >= 30000 && $0 ~ core) next;
-                print port;
-            }' | sort -nu | xargs echo | sed 's/ /, /g')
-    elif [[ $(type -P netstat) ]]; then
-        _ov_sys_ports=$(netstat -tunlp 2>/dev/null | grep -vE "systemd-resolve|chronyd" | awk -v core="$core_name" '
-            $1 ~ /^(tcp|udp)/ {
-                n = split($4, a, ":"); port = a[n];
-                if ($1 ~ /^udp/ && port >= 30000 && $0 ~ core) next;
-                print port;
-            }' | sort -nu | xargs echo | sed 's/ /, /g')
-    fi
-    [[ ! $_ov_sys_ports ]] && _ov_sys_ports="无"
-
-    # relay status
-    _ov_relay_status=""
-    _ov_relay_role=""
-    _ov_relay_warn=""
-    if [[ -f $is_relay_state_file ]]; then
-        _ov_relay_role=$(jq -r '.role // empty' "$is_relay_state_file" 2>/dev/null)
-        if [[ "$_ov_relay_role" == "line" ]]; then
-            local r_lip=$(jq -r '.landing_ip // empty' "$is_relay_state_file" 2>/dev/null)
-            local r_lport=$(jq -r '.landing_port // empty' "$is_relay_state_file" 2>/dev/null)
-            _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${r_lip}:${r_lport}${none}"
-
-            local has_out=$(jq -r '.outbounds[]? | select(.tag == "relay-out") | .tag' "$is_config_json" 2>/dev/null)
-            local has_rule=$(jq -r '.routing.rules[]? | select(.outboundTag == "relay-out") | .outboundTag' "$is_config_json" 2>/dev/null)
-            local has_client=$(jq -r '.inbounds[]?.settings?.clients[]? | select(.email == "relay-vision-v4") | .email' "$is_conf_dir"/*.json 2>/dev/null | head -1)
-            if [[ -z "$has_out" || -z "$has_rule" || -z "$has_client" ]]; then
-                _ov_relay_warn="  [警告] 中继配置状态异常 (线路机配置缺失组件)，请在菜单中检查！\n"
-            fi
-        elif [[ "$_ov_relay_role" == "landing" ]]; then
-            local r_pip=$(jq -r '.peer_ip // empty' "$is_relay_state_file" 2>/dev/null)
-            local r_lport=$(jq -r '.listen_port // empty' "$is_relay_state_file" 2>/dev/null)
-            _ov_relay_status="${cyan}[中继]${none} 落地 ← ${green}${r_pip}${none}   端口: ${green}${r_lport}${none}"
-
-            if [[ ! -f "$is_conf_dir/99_relay_in.json" ]]; then
-                _ov_relay_warn="  [警告] 中继配置状态异常 (落地机缺少 99_relay_in.json)，请在菜单中检查！\n"
-            fi
-        fi
-    fi
-    [[ -z "$_ov_relay_status" ]] && _ov_relay_status="${cyan}[中继]${none} ${gray}未配置${none}"
-    
-    _check_sni_status
-}
-
-
-misc_menu() {
-    while :; do
-        clear
-        echo
-        _line
-        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${gray}|${none}  ${gray}Script ${is_sh_ver}${none}  ${gray}|${none}  ${is_core_status}"
-        _line
-        
-        _section "杂项管理"
-        _menu 1 "测试运行"
-        _menu 2 "查看综合日志"
-        _menu 3 "修改日志等级"
-        _menu 4 "端口管理 (放行/关闭)"
-        _menu 5 "更新"
-        _menu 6 "卸载"
-        
-        echo
-        echo -ne "  请选择 [${green}1-6${none}] [${red}0 返回主菜单${none}]: "
-        read REPLY
-        [[ "$REPLY" == "0" ]] && return
-        
-        case $REPLY in
-        1)
-            echo
-            get test-run
-            pause
-            ;;
-        2)
-            get log
-            ;;
-        3)
-            echo
-            ask list is_log_level "debug info warning error none" "\n  请选择日志等级:"
-            [[ $REPLY == "0" ]] && continue
-            sed -i "s/\"loglevel\": \".*\"/\"loglevel\": \"$is_log_level\"/g" /usr/local/etc/xray/config.json
-            _ok "日志等级已修改为: $is_log_level"
-            manage restart
-            sleep 1
-            ;;
-        4)
-            echo
-            ask string p "  请输入端口操作 (例: o 443 开放, c 443 关闭) [0 返回]:"
-            [[ $REPLY == "0" ]] && continue
-            local action=$(echo $p | awk '{print $1}')
-            local port=$(echo $p | awk '{print $2}')
-            if [[ ($action == "o" || $action == "c") ]] && [[ $(is_test port $port) ]]; then
-                if [[ $action == "o" ]]; then
-                    open_port $port
-                    _ok "已放行端口: $port"
-                else
-                    close_port $port
-                    _ok "已关闭端口: $port"
-                fi
-            else
-                _fail "无效的指令或端口格式"
-            fi
-            pause
-            ;;
-        5)
-            echo
-            is_tmp_list=("更新$is_core_name" "更新脚本")
-            ask list is_do_update null "\n  请选择更新:\n"
-            [[ $REPLY == "0" ]] && continue
-            update $REPLY
-            pause
-            ;;
-        6)
-            uninstall
-            exit 0
-            ;;
-        esac
-    done
-}
-
-is_main_menu() {
-    while :; do
-        _reset_state
-        _get_overview
-        clear
-
-        # ── header ──
-        _line
-        echo -e "  ${bold}${cyan}$is_core_name${none} ${gray}${is_core_ver}${none}  ${gray}|${none}  ${gray}Script ${is_sh_ver}${none}  ${gray}|${none}  ${is_core_status}"
-        _line
-
-        # ── config overview ──
-        if [[ $_ov_port ]]; then
-            local short_pbk="$_ov_pbk"
-            if [[ ${#short_pbk} -gt 25 ]]; then
-                short_pbk="${short_pbk:0:15}...${short_pbk:(-5)}"
-            fi
-
-            echo -e "  ${cyan}[基础]${none} 端口: ${green}$_ov_port${none}   分离: ${green}$_ov_route_mode${none}   日志: ${green}$_ov_log_level${none}   出站: ${green}$_ov_outbound_pref${none}"
-            echo -e "  ${cyan}[UUID]${none} ${green}$_ov_uuid${none}"
-            echo -e "  ${cyan}[ v4 ]${none} SNI: $_ov_v4_sni_status$_ov_v4_cdn_status${green}$_ov_v4_sni${none}   SIDs: ${green}$_ov_v4_sids${none}"
-            echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status$_ov_v6_cdn_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}"
-            echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
-            echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
-            echo -e "  $_ov_relay_status"
-        else
-            echo -e "  ${gray}暂无配置${none}"
-        fi
-        _line
-
-        # ── menu items ──
-        _section "节点管理"
-        _menu 1 "更改配置"
-        _menu 2 "查看客户端配置"
-        _menu 3 "查看完整服务端配置"
-        _menu 4 "线路 / 落地互联"
-
-        _section "运行控制"
-        _menu 5 "启动 / 停止 / 重启"
-        _menu 6 "查看运行状态"
-
-        _section "杂项"
-        _menu 7 "杂项管理 (包含日志/更新等)"
-
-        if [[ $_ov_ip_warning || $_ov_sni_warning || $_ov_cdn_warning || $_ov_relay_warn ]]; then
-            echo
-            [[ $_ov_ip_warning ]] && echo -ne "${red}${_ov_ip_warning}${none}"
-            [[ $_ov_sni_warning ]] && echo -ne "${red}${_ov_sni_warning}${none}"
-            [[ $_ov_cdn_warning ]] && echo -ne "${red}${_ov_cdn_warning}${none}"
-            [[ $_ov_relay_warn ]] && echo -ne "${red}${_ov_relay_warn}${none}"
-        fi
-
-        echo
-        echo -ne "  请选择 [${green}1-7${none}] [${red}0 退出${none}]: "
-        read REPLY
-        [[ "$REPLY" == "0" ]] && exit 0
-        case $REPLY in
-        1)
-            change
-            [[ $REPLY == "0" ]] && continue
-            pause
-            ;;
-        2)
-            info
-            [[ $REPLY == "0" ]] && continue
-            pause
-            ;;
-        3)
-            echo
-            ask list is_view_mode "预览(支持滚动) 输出(打印全部)" "\n  请选择查看方式:"
-            [[ $REPLY == "0" ]] && continue
-            echo
-            _step "完整服务端配置如下 (自动合并 config.json 及独立节点配置):"
-            echo
-            local merged_json=$(jq -s '.[0] + {inbounds: [.[1:][].inbounds[]?]}' $is_config_json $is_conf_dir/*.json 2>/dev/null)
-            if [[ $merged_json ]]; then
-                if [[ $is_view_mode == "预览(支持滚动)" ]] && command -v less &>/dev/null; then
-                    echo "$merged_json" | jq -C . | less -R
-                else
-                    echo "$merged_json" | jq -C .
-                fi
-            else
-                _fail "无法读取或合并配置文件"
-            fi
-            pause
-            ;;
-        4)
-            relay_menu
-            ;;
-        5)
-            echo
-            ask list is_do_manage "启动 停止 重启"
-            [[ $REPLY == "0" ]] && continue
-            manage $REPLY &
-            _ok "执行操作: $is_do_manage"
-            sleep 2
-            ;;
-        6)
-            echo
-            systemctl status $is_core -l --no-pager
-            echo
-            pause
-            ;;
-        7)
-            misc_menu
-            ;;
-        esac
-    done
-}

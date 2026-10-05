@@ -1,7 +1,7 @@
 #!/bin/bash
 
 author=Chen017
-# github=https://github.com/233boy/xray
+# https://github.com/Chen017/Xray
 
 # ─── bash fonts colors ────────────────────────────────────
 red='\e[31m'
@@ -15,31 +15,31 @@ bold='\e[1m'
 dim='\e[2m'
 none='\e[0m'
 
-_red() { echo -e "${red}$@${none}"; }
-_blue() { echo -e "${blue}$@${none}"; }
-_cyan() { echo -e "${cyan}$@${none}"; }
-_green() { echo -e "${green}$@${none}"; }
-_yellow() { echo -e "${yellow}$@${none}"; }
-_magenta() { echo -e "${magenta}$@${none}"; }
-_gray() { echo -e "${gray}$@${none}"; }
-_red_bg() { echo -e "\e[41m$@${none}"; }
+_red() { echo -e "${red}$*${none}"; }
+_blue() { echo -e "${blue}$*${none}"; }
+_cyan() { echo -e "${cyan}$*${none}"; }
+_green() { echo -e "${green}$*${none}"; }
+_yellow() { echo -e "${yellow}$*${none}"; }
+_magenta() { echo -e "${magenta}$*${none}"; }
+_gray() { echo -e "${gray}$*${none}"; }
+_red_bg() { echo -e "\e[41m$*${none}"; }
 
 _line() { echo -e "${gray}────────────────────────────────────────────────${none}"; }
-_ok() { echo -e "  ${green}[✓]${none} $@"; }
-_fail() { echo -e "  ${red}[✗]${none} $@"; }
-_info() { echo -e "  ${cyan}[i]${none} $@"; }
-_step() { echo -e "  ${blue}>>>${none} $@"; }
+_ok() { echo -e "  ${green}[✓]${none} $*"; }
+_fail() { echo -e "  ${red}[✗]${none} $*"; }
+_info() { echo -e "  ${cyan}[i]${none} $*"; }
+_step() { echo -e "  ${blue}>>>${none} $*"; }
 _kv() { printf "  ${gray}%-14s${none}%b\n" "$1" "$2"; }
 
 is_err="${red}[错误]${none}"
 is_warn="${yellow}[警告]${none}"
 
 err() {
-    echo -e "\n  ${red}[错误]${none} $@\n" && exit 1
+    echo -e "\n  ${red}[错误]${none} $*\n" && exit 1
 }
 
 warn() {
-    echo -e "\n  ${yellow}[警告]${none} $@\n"
+    echo -e "\n  ${yellow}[警告]${none} $*\n"
 }
 
 # root
@@ -82,7 +82,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip"
+is_pkg="wget curl unzip openssl iptables util-linux logrotate ca-certificates"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
     tmpcore
@@ -94,11 +94,12 @@ tmp_var_lists=(
     is_pkg_ok
 )
 
-# tmp dir
-tmpdir=$(mktemp -u)
-[[ ! $tmpdir ]] && {
-    tmpdir=/tmp/tmp-$RANDOM
-}
+# Reserve a private directory and clean up our own background jobs on interruption.
+umask 077
+tmpdir=$(mktemp -d) || err "无法创建临时目录"
+trap 'jobs -pr | xargs -r kill 2>/dev/null; rm -rf "$tmpdir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # set up var
 for i in ${tmp_var_lists[*]}; do
@@ -110,10 +111,10 @@ load() {
     . $is_sh_dir/src/$1
 }
 
-# wget add --no-check-certificate
+# Bootstrap downloads use normal TLS certificate verification.
 _wget() {
-    [[ $proxy ]] && export https_proxy=$proxy
-    wget --no-check-certificate $*
+    [[ ! $proxy ]] || export https_proxy="$proxy"
+    wget --timeout=15 --tries=2 "$@"
 }
 
 # print a message
@@ -177,8 +178,13 @@ install_pkg() {
 download() {
     case $1 in
     core)
-        link=https://github.com/${is_core_repo}/releases/latest/download/${is_core}-linux-${is_core_arch}.zip
-        [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-linux-${is_core_arch}.zip"
+        local core_version="$is_core_ver"
+        if [[ -z $core_version ]]; then
+            core_version=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest" |
+                sed -n 's/.*"tag_name": *"\(v[0-9][0-9.]*\)".*/\1/p' | head -1)
+        fi
+        [[ $core_version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { _fail "无法确认内核发布版本"; return 1; }
+        link="https://github.com/${is_core_repo}/releases/download/${core_version}/Xray-linux-${is_core_arch}.zip"
         name=$is_core_name
         tmpfile=$tmpcore
         is_ok=$is_core_ok
@@ -198,15 +204,22 @@ download() {
     esac
 
     _step "下载 ${name} ..."
-    if _wget -t 3 -q --show-progress -c $link -O $tmpfile; then
-        mv -f $tmpfile $is_ok
+    if _wget -t 3 -q --show-progress -c "$link" -O "$tmpfile"; then
+        if [[ $1 == core ]]; then
+            local expected actual
+            _wget -q "$link.dgst" -O "$tmpfile.dgst" || return 1
+            expected=$(grep -iE 'sha[-_ ]?(2[-_ ]?)?256' "$tmpfile.dgst" | grep -Eo '[0-9a-fA-F]{64}' | head -1 | tr 'A-F' 'a-f')
+            actual=$(sha256sum "$tmpfile" | awk '{print $1}')
+            [[ -n $expected && $expected == "$actual" ]] || { _fail "内核 SHA256 校验失败"; return 1; }
+        fi
+        mv -f "$tmpfile" "$is_ok"
     fi
 }
 
 # get server ip
 get_ip() {
-    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    export "$(_wget -T 5 -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
+    [[ -z $ip ]] && export "$(_wget -T 5 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
 }
 
 # check background tasks status
@@ -287,7 +300,7 @@ pass_args() {
             show_help
             ;;
         *)
-            echo -e "\n  ${red}[错误]${none} ($@) 为未知参数\n"
+            echo -e "\n  ${red}[错误]${none} ($*) 为未知参数\n"
             show_help
             ;;
         esac
@@ -319,7 +332,7 @@ main() {
     }
 
     # check parameters
-    [[ $# -gt 0 ]] && pass_args $@
+    [[ $# -gt 0 ]] && pass_args "$@"
 
     # show welcome msg
     clear
@@ -394,6 +407,14 @@ main() {
     # create sh dir...
     mkdir -p $is_sh_dir
 
+    # Validate archives before executing any downloaded source.
+    for archive in "$is_core_ok" "$is_sh_ok"; do
+        [[ -s "$archive" ]] || continue
+        unzip -tq "$archive" >/dev/null || err "下载的压缩包损坏"
+        if unzip -Z -1 "$archive" | grep -qE '(^/|(^|/)\.\.(/|$)|^[a-zA-Z]:)'; then
+            err "压缩包包含不安全路径"
+        fi
+    done
     # copy sh file or unzip sh zip file.
     if [[ $local_install ]]; then
         cp -rf $PWD/* $is_sh_dir
@@ -411,7 +432,7 @@ main() {
     fi
 
     # add alias
-    echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
+    grep -Fxq "alias $is_core=$is_sh_bin" /root/.bashrc || echo "alias $is_core=$is_sh_bin" >>/root/.bashrc
 
     # core command
     ln -sf $is_sh_dir/$is_core.sh $is_sh_bin
@@ -432,93 +453,21 @@ main() {
     is_new_install=1
     install_service $is_core &>/dev/null
 
-    # ─── setup baseline firewall ──────────────────────────────
-    _ok "正在配置基础防火墙规则..."
-
-    # auto-detect SSH port (sshd_config → ss → fallback 22)
-    is_ssh_port=$(grep -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
-    [[ -z $is_ssh_port ]] && is_ssh_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|"ssh"' | awk '{print $4}' | sed 's/.*://' | head -1)
-    [[ -z $is_ssh_port ]] && is_ssh_port=22
-
-    # install iptables + persistence tools
-    if ! command -v iptables &>/dev/null; then
-        if [[ $cmd =~ apt ]]; then
-            DEBIAN_FRONTEND=noninteractive $cmd install -y iptables ip6tables netfilter-persistent iptables-persistent &>/dev/null
-        else
-            $cmd install -y iptables iptables-services &>/dev/null
-            systemctl enable --now iptables &>/dev/null
-            systemctl enable --now ip6tables &>/dev/null
-        fi
-    else
-        # iptables already present — ensure persistence tools exist
-        if [[ $cmd =~ apt ]] && ! dpkg -l iptables-persistent &>/dev/null 2>&1; then
-            DEBIAN_FRONTEND=noninteractive $cmd install -y netfilter-persistent iptables-persistent &>/dev/null
-        fi
-    fi
-
-    if command -v iptables &>/dev/null; then
-        # ── IPv4: temp ACCEPT → flush → rules → DROP ──
-        iptables -P INPUT ACCEPT
-        iptables -P FORWARD ACCEPT
-        iptables -P OUTPUT ACCEPT
-        iptables -F
-        iptables -X
-        iptables -Z
-
-        iptables -A INPUT -i lo -j ACCEPT
-        iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        iptables -A INPUT -p icmp -j ACCEPT
-        iptables -A INPUT -p tcp --dport $is_ssh_port -j ACCEPT
-        iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-        iptables -A INPUT -p udp --dport 443 -j ACCEPT
-
-        iptables -P INPUT DROP
-        iptables -P FORWARD DROP
-        iptables -P OUTPUT ACCEPT
-
-        # ── IPv6: temp ACCEPT → flush → rules → DROP ──
-        if command -v ip6tables &>/dev/null; then
-            ip6tables -P INPUT ACCEPT
-            ip6tables -P FORWARD ACCEPT
-            ip6tables -P OUTPUT ACCEPT
-            ip6tables -F
-            ip6tables -X
-            ip6tables -Z
-
-            ip6tables -A INPUT -i lo -j ACCEPT
-            ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-            ip6tables -A INPUT -p ipv6-icmp -j ACCEPT
-            ip6tables -A INPUT -p tcp --dport $is_ssh_port -j ACCEPT
-            ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
-            ip6tables -A INPUT -p udp --dport 443 -j ACCEPT
-
-            ip6tables -P INPUT DROP
-            ip6tables -P FORWARD DROP
-            ip6tables -P OUTPUT ACCEPT
-        fi
-
-        # ── persist rules & enable on boot ──
-        if [[ $(type -P netfilter-persistent) ]]; then
-            netfilter-persistent save &>/dev/null
-            systemctl enable netfilter-persistent &>/dev/null
-        elif [[ $(type -P iptables-save) && -d /etc/iptables ]]; then
-            iptables-save > /etc/iptables/rules.v4
-            [[ $(type -P ip6tables-save) ]] && ip6tables-save > /etc/iptables/rules.v6
-        elif [[ $(type -P service) ]]; then
-            service iptables save &>/dev/null 2>&1
-            service ip6tables save &>/dev/null 2>&1
-        fi
-        > $is_core_dir/.fw_init_done
-        _ok "防火墙已配置: SSH($is_ssh_port) + HTTPS(443) 放行, 其余入站拒绝"
-    fi
-
+    # Node rules are reconciled by firewall.sh; existing system policies remain intact.
+    load runtime.sh
+    load firewall.sh
+    load maintenance.sh
+    load routing.sh
+    load export.sh
     # create condf dir
     mkdir -p $is_conf_dir
 
     load core.sh
     # create a tcp config
     _step "正在生成节点配置与密钥..."
-    add reality
+    add reality || exit_and_del_tmpdir
+    install_maintenance || err "维护任务安装失败，请进入维护菜单重试"
+    printf '%s\n' 1 > "$is_core_dir/.schema-version"
     
     # 启用 BBR
     load bbr.sh
@@ -526,11 +475,10 @@ main() {
     _try_enable_bbr
     
     _step "正在启动 $is_core_name 服务..."
-    sleep 1.5
-    if [[ $(pgrep -f $is_core_bin) ]]; then
+    if service_active; then
         _ok "$is_core_name 服务已成功启动"
     else
-        _fail "$is_core_name 启动可能遇到异常，请运行 ${yellow}xray${none} 查看状态"
+        err "$is_core_name 启动失败，请查看错误日志"
     fi
     
     echo
@@ -544,4 +492,4 @@ main() {
 }
 
 # start.
-main $@
+main "$@"

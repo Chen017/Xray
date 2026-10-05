@@ -1,6 +1,6 @@
+#!/bin/bash
 install_service() {
     is_doc_site=https://xtls.github.io/
-    [[ $1 == 'v2ray' ]] && is_doc_site=https://www.v2fly.org/
     cat >/lib/systemd/system/$is_core.service <<<"
 [Unit]
 Description=$is_core_name Service

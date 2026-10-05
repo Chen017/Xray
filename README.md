@@ -8,7 +8,7 @@
 
 1. 🌐 双栈上下行物理分离：上传流量和下载流量路由到服务器的两个不同 IP 栈（如：IPv4 上行，IPv6 下行），且不同栈拥有截然不同的伪装参数。
 
-2. 🛡️ 顶配 XHTTP 伪装与混淆：设置了多项深度的 `xhttp` 高级混淆与性能优化参数：`x-padding-bytes`、`x-padding-placement`、`x-padding-method`、`x-padding-key`、`x-padding-header`、`x-padding-obfs-mode`、`session/seq-placement`、`no-grpc-header`、`no-sse-header`、`uplink-http-method`、`sc-stream-up-server-secs`、`server-max-header-bytes`、`max-concurrency`、`h-max-request-times`、`h-max-reusable-secs`，以及双栈套接字层面的 `packet-encoding: xudp`、`tcp-fast-open` (TFO) 与 `tcp-mptcp` (MPTCP)。配合上行模拟 `chrome` 指纹，下行模拟 `firefox` 指纹。
+2. 🛡️ 顶配 XHTTP 伪装与混淆：设置了多项深度的 `xhttp` 高级混淆与性能优化参数：`x-padding-bytes`、`x-padding-placement`、`x-padding-method`、`x-padding-key`、`x-padding-header`、`x-padding-obfs-mode`、`session/seq-placement`、`no-grpc-header`、`no-sse-header`、`uplink-http-method`、`sc-stream-up-server-secs`、`server-max-header-bytes`、`max-concurrency`、`h-max-request-times`、`h-max-reusable-secs`，以及客户端侧的 `packet-encoding: xudp`、`tcp-fast-open` (TFO) 与 `tcp-mptcp` (MPTCP)。服务端限制与客户端复用参数分别生成。配合上行模拟 `chrome` 指纹，下行模拟 `firefox` 指纹。
 
 3. 🔒 REALITY 安全性
     - Vision 流控：入站支持 `xtls-rprx-vision`
@@ -16,22 +16,24 @@
 
 ## 🛠️ 脚本功能大纲
 
-- 自动加速优化：一键开启内核 BBR 拥塞控制、TCP Fast Open (TFO) 与 Multipath TCP (MPTCP)。自动集成 Happy Eyeballs (UseIPv4v6) 机制实现双栈自动优选与平滑回退。
+- 自动加速优化：内核支持时启用 BBR；TFO 与 MPTCP 的效果取决于内核、网络和客户端。支持选择真正的 Happy Eyeballs 双栈 TCP 连接竞速（需 Xray v25.6.8+）；`UseIPv4v6` 仅表示解析优先，不等于连接失败回退。
 - 安全探针：
-  - 自动探测当前服务器 IP 的 GFW 连通性状态。
-  - SNI 安全自检：校验伪装域名的证书及 TLS 1.3, h2等。在面板提供 `✓` 或 `✗` 的可视化标记与预警提醒。
-  - CDN 检测：自动检测伪装域名 IP 的 ASN 归属，若命中 CDN/云厂商黑名单（Cloudflare、Akamai、CloudFront、Google、Azure 等），在面板标记红色 `CDN` 警告并提示更换域名。
-- 安全策略与分流：内置防火墙配置，屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
+  - 按需检查服务器访问国内测试节点的出站连通性；结果不能证明国内客户端到本机是否被阻断。
+  - SNI 安全自检：按需校验伪装域名的证书、TLS 1.3 与 h2，结果缓存五分钟，可手动刷新；首页只读取本地状态。
+  - CDN 检测：按需查询伪装域名 IP 的 ASN 归属并提示疑似 CDN；DNS 查询失败会报告无法判断，多地址解析不会直接认定为 CDN。
+- 安全策略与分流：使用独立防火墙链，保留系统与其他应用规则；屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
 - 配置交互：
   - 支持更改端口（仅支持 443/8443）、路径、UUID、密钥对、各栈 SNI 伪装域名与 ShortIds。
-  - 支持增加与删除自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct`、强制 IPv4 `direct-v4`、强制 IPv6 `direct-v6` 与阻止 `block`）。
+  - 支持增加、编辑、删除与排序自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct`、IPv4 解析 `direct-v4`、IPv6 解析 `direct-v6` 与阻止 `block`）。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
-  - 支持切换出站 IP 优先策略 (IPv4 / IPv6 / 双栈优选)，适配不同双栈或纯 IPv6 机器需求。
-  - 支持选择 XHTTP 双栈分离或仅 Vision Reality 部署模式，输出对应的 Mihomo YAML 或 VLESS 分享链接。
+  - 支持切换出站 IP 策略（IPv4 / IPv6 解析、双栈解析优先 / 双栈连接竞速），适配不同双栈或纯 IPv6 机器需求。
+  - 支持选择 XHTTP 双栈分离、单栈 XHTTP 或 Vision Reality 客户端连接方案，输出对应的 Mihomo YAML 或 VLESS 分享链接。
 - 运维支持：
   - 合并双端配置文件，提供服务端 JSON 配置预览。
-  - 支持查看综合日志（混合输出 access.log 与 error.log）、修改日志等级、一键测试运行。
-  - 防火墙双栈端口一键统管（放行/关闭）、核心及脚本的在线升级。
+  - 支持查看综合日志（混合输出 access.log 与 error.log）、修改日志等级、配置校验（与启动服务分开）。
+  - 防火墙双栈端口管理（放行/关闭）、核心及脚本的在线升级。
+  - 配置先校验再应用，失败自动回滚；更新校验下载内容并保留上一版本，内容未变化时不重启。脚本更新保留额外的用户文件与外部补丁模块。
+  - geodata 每日通过 systemd 定时更新，校验失败保留旧数据；日志自动轮转，退出时清理临时文件与跟踪进程。
 
 ## ⚙️ 兼容性
 
@@ -48,7 +50,7 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 > **提示**：初次安装需输入伪装的 v4/v6 域名（可使用脚本提供的默认列表）并选择双栈上下行分离模式。
 
 ### 管理菜单
-安装完成后，可在终端执行 `xray` 命令进入交互式主菜单。
+安装完成后，可在终端执行 `xray` 命令进入交互式主菜单。菜单按客户端导出、节点设置、路由与分流、中转/落地、服务管理、日志与诊断、更新与维护分组。
 
 ## 🔗 线路 / 落地互联
 
@@ -58,6 +60,6 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 - **落地机**：既可接收线路中继，也仍然可以作为独立普通节点直接使用。
 
 ### 基本流程：
-1. **在落地机创建中继**：执行 `xray` 进入菜单 `4. 线路 / 落地互联`，输入线路机 IPv4，自动开放防火墙并生成专用的中继链接。
-2. **在线路机导入**：执行 `xray` 进入菜单 `4. 线路 / 落地互联`，选择配置为线路机并粘贴中继链接。
-3. **获取客户端配置**：在线路机进入 `2. 查看客户端配置`，选择 `经落地`，即可导出通过落地出站的配置（客户端连接地址仍为线路机）。
+1. **在落地机创建中继**：执行 `xray` 进入菜单 `4. 中转/落地管理`，输入线路机 IPv4，自动开放防火墙并生成专用的中继链接。
+2. **在线路机导入**：执行 `xray` 进入菜单 `4. 中转/落地管理`，选择配置为线路机并粘贴中继链接。
+3. **获取客户端配置**：在线路机进入 `1. 导出客户端配置`，选择 `经落地`，即可导出通过落地出站的配置（客户端连接地址仍为线路机）。

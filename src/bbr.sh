@@ -1,18 +1,22 @@
+#!/bin/bash
+
 _open_bbr() {
-	sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-	sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-	echo "net.ipv4.tcp_congestion_control = bbr" >>/etc/sysctl.conf
-	echo "net.core.default_qdisc = fq" >>/etc/sysctl.conf
-	sysctl -p &>/dev/null
-	_ok "BBR 拥塞控制已启用"
+    local file=/etc/sysctl.d/99-xray-bbr.conf
+    printf '%s\n' 'net.ipv4.tcp_congestion_control = bbr' 'net.core.default_qdisc = fq' > "$file" || return 1
+    if sysctl -p "$file" >/dev/null 2>&1 &&
+       [[ $(sysctl -n net.ipv4.tcp_congestion_control) == bbr ]]; then
+        _ok "BBR 已启用"
+    else
+        _info "BBR 设置未生效，请检查内核支持；节点配置不受影响"
+        return 1
+    fi
 }
 
 _try_enable_bbr() {
-	local _test1=$(uname -r | cut -d\. -f1)
-	local _test2=$(uname -r | cut -d\. -f2)
-	if [[ $_test1 -eq 4 && $_test2 -ge 9 ]] || [[ $_test1 -ge 5 ]]; then
-		_open_bbr
-	else
-		_info "当前内核版本不支持 BBR, 跳过"
-	fi
+    modprobe tcp_bbr >/dev/null 2>&1 || true
+    if sysctl -n net.ipv4.tcp_available_congestion_control | grep -qw bbr; then
+        _open_bbr
+    else
+        _info "当前内核未提供 BBR，跳过"
+    fi
 }
