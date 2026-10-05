@@ -1,6 +1,7 @@
 #!/bin/bash
 
-declare -A diagnostic_cache diagnostic_time
+# Modules are sourced inside load(); ordinary declare would create function-local arrays.
+declare -gA diagnostic_cache diagnostic_time
 
 _detect_cdn() {
     local domain="$1" family="${2:-4}" ips="" first org count type=A

@@ -47,8 +47,15 @@ iptables() { python "$repo/tests/fake_firewall.py" v4 "$@"; }
 ip6tables() { python "$repo/tests/fake_firewall.py" v6 "$@"; }
 . <(sed '/^cmd=/,$d' "$repo/src/init.sh")
 for module in runtime firewall core maintenance routing diagnostics export menus download; do
-    . "$repo/src/$module.sh"
+    # Match init.sh: declarations in a sourced module must survive load() returning.
+    load "$module.sh"
 done
+[[ $(declare -p diagnostic_cache) == 'declare -A '* ]]
+[[ $(declare -p diagnostic_time) == 'declare -A '* ]]
+cache_test_key='4:us.kjwing.com'
+diagnostic_cache["$cache_test_key"]='startup regression sentinel'
+[[ ${diagnostic_cache[$cache_test_key]} == 'startup regression sentinel' ]]
+unset 'diagnostic_cache[$cache_test_key]'
 check() { if ! "$@"; then printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
 pass() { printf 'PASS: %s\n' "$*"; }
 get_ip() { ip=203.0.113.10; }
@@ -57,7 +64,7 @@ get_port() { tmp_port=443; }
 get_pbk
 uuid=$("$is_core_bin" uuid)
 port=443
-v4_sni=example.com
+v4_sni=us.kjwing.com
 v6_sni=example.org
 v4_short_ids='["12345678","abcdef1234567890"]'
 v6_short_ids='["87654321","1234567890abcdef"]'
@@ -157,12 +164,13 @@ menu_output="$scratch/homepage.txt"
 clear() { :; }
 is_core_name=Xray
 is_core_ver=26.3.27
-is_sh_ver=v2.6.1
+is_sh_ver=v2.6.2
 is_main_menu <<< 0 > "$menu_output"
 for label in '[基础]' '[UUID]' '[ v4 ]' '[ v6 ]' '[高级]' '[状态]' 节点管理 运行控制 杂项 '查看客户端配置' '查看运行状态'; do
     check grep -Fq "$label" "$menu_output"
 done
 check test "$_ov_uuid" = "$(jq -r '.inbounds[0].settings.clients[0].id' "$is_conf_dir/VLESS-REALITY-443.json")"
+check test "$_ov_v4_sni" = us.kjwing.com
 unset -f clear
 pass 'original terminal overview, sections, numbering and exit behavior are restored'
 
@@ -282,14 +290,14 @@ echo 'is_sh_ver=v2.5.4' > "$is_sh_dir/xray.sh"
 echo 'external patch sentinel' > "$is_sh_dir/ipquality_patch.sh"
 ln -s "$is_sh_dir/xray.sh" "$is_sh_bin"
 script_fixture=bad-sh.zip
-if safe_update sh v2.6.1; then echo 'FAIL: invalid script accepted'; exit 1; fi
+if safe_update sh v2.6.2; then echo 'FAIL: invalid script accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=incomplete-sh.zip
-if safe_update sh v2.6.1; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
+if safe_update sh v2.6.2; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=sh.zip
-check safe_update sh v2.6.1
-check grep -q v2.6.1 "$is_sh_dir/xray.sh"
+check safe_update sh v2.6.2
+check grep -q v2.6.2 "$is_sh_dir/xray.sh"
 check grep -q 'external patch sentinel' "$is_sh_dir/ipquality_patch.sh"
 check grep -q v2.5.4 "$is_core_dir/.previous/sh/xray.sh"
 pass 'script update rejects bad syntax, keeps previous scripts and preserves external patch files'
