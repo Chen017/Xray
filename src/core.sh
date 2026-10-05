@@ -55,6 +55,7 @@ get_ip() {
         _fail "获取服务器 IP 失败，请检查网络后重试"
         return 1
     }
+    return 0
 }
 
 get_ipv6() {
@@ -1440,11 +1441,12 @@ get() {
     case $1 in
     addr)
         is_addr=$host
-        [[ ! $is_addr ]] && {
-            get_ip
+        if [[ -z $is_addr ]]; then
+            get_ip || return 1
             is_addr=$ip
-
-        }
+        fi
+        [[ -n $is_addr ]] || { _fail "未获取到连接地址"; return 1; }
+        return 0
         ;;
     new)
         [[ ! $host ]] && get_ip
@@ -1480,11 +1482,13 @@ get() {
         [[ ! $is_file_str ]] && is_file_str='.json$'
         readarray -t is_all_json <<<"$(list_managed_node_configs "$is_file_str" | head -233)" # limit max 233 lines for show.
         [[ ${#is_all_json[@]} -eq 1 && -z "${is_all_json[0]}" ]] && unset is_all_json
-        [[ ! $is_all_json ]] && err "无法找到相关的配置文件: $2"
+        [[ ${#is_all_json[@]} -gt 0 ]] || { _fail "无法找到相关的配置文件: $2"; return 1; }
         [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=${is_all_json[0]} && is_auto_get_config=1
         [[ ! $is_config_file ]] && {
-                ask get_config_file
+                ask get_config_file || return 1
         }
+        [[ -n $is_config_file ]] || return 1
+        return 0
         ;;
     info)
         get file "$2" || return 1

@@ -6,6 +6,8 @@ root = Path(os.environ['TEST_STATE'])
 family, *args = sys.argv[1:]
 if args[:2] == ['-w', '5']:
     args = args[2:]
+elif args[:2] == ['-w', '2']:
+    args = args[2:]
 path = root / (family + '.json')
 initial = {'INPUT': [['-p', 'tcp', '--dport', '22', '-j', 'ACCEPT']],
            'FORWARD': [['-j', 'EXISTING-FORWARD']], 'OUTPUT': [], 'OTHER-APP': [['-j', 'RETURN']]}
@@ -20,7 +22,11 @@ if op == '-N':
     if chain in state: code = 1
     else: state[chain] = []
 elif op == '-S':
-    if chain not in state: code = 1
+    if chain is None:
+        print('-P INPUT DROP')
+        for name, items in state.items():
+            for item in items: print('-A', name, *item)
+    elif chain not in state: code = 1
     else:
         for item in state[chain]: print('-A', chain, *item)
 elif op == '-F':

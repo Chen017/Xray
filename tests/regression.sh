@@ -45,8 +45,9 @@ systemctl() {
 }
 iptables() { python "$repo/tests/fake_firewall.py" v4 "$@"; }
 ip6tables() { python "$repo/tests/fake_firewall.py" v6 "$@"; }
+nft() { printf '%s\n' '{"nftables":[]}'; }
 . <(sed '/^cmd=/,$d' "$repo/src/init.sh")
-for module in runtime firewall core maintenance routing diagnostics export menus download; do
+for module in runtime firewall core maintenance routing diagnostics status export menus download; do
     # Match init.sh: declarations in a sourced module must survive load() returning.
     load "$module.sh"
 done
@@ -149,6 +150,9 @@ check close_port 443
 check open_port 443
 check test "$restarts" = "$(wc -l < "$TEST_STATE/service.commands")"
 pass 'manual firewall changes do not restart the proxy'
+. "$repo/tests/status_checks.sh"
+. "$repo/tests/interactive_checks.sh"
+. "$repo/tests/entrypoint_checks.sh"
 
 # Failed DNS is unknown and multiple addresses are only a hint.
 dig() { return 1; }
@@ -164,7 +168,7 @@ menu_output="$scratch/homepage.txt"
 clear() { :; }
 is_core_name=Xray
 is_core_ver=26.3.27
-is_sh_ver=v2.6.2
+is_sh_ver=v2.6.3
 is_main_menu <<< 0 > "$menu_output"
 for label in '[基础]' '[UUID]' '[ v4 ]' '[ v6 ]' '[高级]' '[状态]' 节点管理 运行控制 杂项 '查看客户端配置' '查看运行状态'; do
     check grep -Fq "$label" "$menu_output"
@@ -290,14 +294,14 @@ echo 'is_sh_ver=v2.5.4' > "$is_sh_dir/xray.sh"
 echo 'external patch sentinel' > "$is_sh_dir/ipquality_patch.sh"
 ln -s "$is_sh_dir/xray.sh" "$is_sh_bin"
 script_fixture=bad-sh.zip
-if safe_update sh v2.6.2; then echo 'FAIL: invalid script accepted'; exit 1; fi
+if safe_update sh v2.6.3; then echo 'FAIL: invalid script accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=incomplete-sh.zip
-if safe_update sh v2.6.2; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
+if safe_update sh v2.6.3; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=sh.zip
-check safe_update sh v2.6.2
-check grep -q v2.6.2 "$is_sh_dir/xray.sh"
+check safe_update sh v2.6.3
+check grep -q v2.6.3 "$is_sh_dir/xray.sh"
 check grep -q 'external patch sentinel' "$is_sh_dir/ipquality_patch.sh"
 check grep -q v2.5.4 "$is_core_dir/.previous/sh/xray.sh"
 pass 'script update rejects bad syntax, keeps previous scripts and preserves external patch files'

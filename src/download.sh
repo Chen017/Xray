@@ -81,7 +81,7 @@ safe_update() (
         cp -a "$is_sh_dir/." "$stage/candidate/" || exit 1
         unzip -qo "$stage/archive.zip" -d "$stage/candidate" || exit 1
         unzip -Z -1 "$stage/archive.zip" > "$stage/files" || exit 1
-        for file in xray.sh update_geodata.sh src/init.sh src/core.sh src/runtime.sh src/firewall.sh src/maintenance.sh src/menus.sh src/export.sh src/diagnostics.sh src/routing.sh src/download.sh src/node.jq; do
+        for file in xray.sh update_geodata.sh src/init.sh src/core.sh src/runtime.sh src/firewall.sh src/maintenance.sh src/menus.sh src/export.sh src/diagnostics.sh src/status.sh src/status.jq src/routing.sh src/download.sh src/node.jq; do
             grep -Fxq "$file" "$stage/files" && [[ -s "$stage/candidate/$file" ]] || { _fail "脚本包缺少 $file"; exit 1; }
         done
         while IFS= read -r file; do

@@ -20,7 +20,7 @@ load_node_info() {
     v4_short_ids=${values[7]}; v6_short_ids=${values[8]}; v4_path=${values[9]}; v6_path=$v4_path
     if [[ -z "$is_public_key" ]]; then
         is_public_key=$("$is_core_bin" x25519 -i "$is_private_key" 2>/dev/null |
-            awk -F ': *' '/^(Public key|PublicKey|Password):/ {print $2; exit}')
+            awk -F ': *' '/^(Public key|PublicKey|Password( \(PublicKey\))?):/ {print $2; exit}')
     fi
     net=reality
     is_reality=1
@@ -110,7 +110,7 @@ info() {
     [[ ! $is_dont_show_info ]] || return 0
     [[ -n "$is_public_key" ]] || { _fail "无法读取或推导 REALITY 公钥，请检查内核与密钥"; return 1; }
     get addr || return 1
-    get_ipv6
+    get_ipv6 || true
     local v4_ip="$is_addr" v6_ip="${ipv6:-}" mode up_ip up_sni up_sid down_ip down_sni down_sid
     v4_ip=${v4_ip#[}; v4_ip=${v4_ip%]}
     [[ $v4_ip != *:* ]] || { v6_ip=$v4_ip; v4_ip=""; }

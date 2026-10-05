@@ -42,16 +42,17 @@ diagnose_sni() {
     [[ $(is_test domain "$domain") ]] || { _fail "无效 SNI 域名"; return 1; }
     local -a http_options=()
     if curl --version | grep -q HTTP2; then http_options=(--http2); fi
-    output=$(curl --noproxy '*' "-$family" --silent --show-error --connect-timeout 3 --max-time 5 \
+    # The v4/v6 label identifies the configured SNI, not a required address family for its target.
+    output=$(curl --noproxy '*' --silent --show-error --connect-timeout 3 --max-time 5 \
         --tlsv1.3 --tls-max 1.3 "${http_options[@]}" -o /dev/null -w '%{http_version}' "https://$domain" 2>&1) || rc=$?
     if (( rc )); then
-        result="IPv$family $domain：本机测试未通过（$output）；请同时检查本机出站与 DNS"
+        result="v$family SNI $domain：本机测试未通过（$output）；请同时检查本机出站与 DNS"
     elif (( ${#http_options[@]} == 0 )); then
-        result="IPv$family $domain：证书与 TLS 1.3 通过；本机 curl 无 HTTP/2 能力，h2 未验证"
+        result="v$family SNI $domain：证书与 TLS 1.3 通过；本机 curl 无 HTTP/2 能力，h2 未验证"
     elif [[ $output == 2 || $output == 2.0 ]]; then
-        result="IPv$family $domain：证书、TLS 1.3 与 h2 通过"
+        result="v$family SNI $domain：证书、TLS 1.3 与 h2 通过"
     else
-        result="IPv$family $domain：证书与 TLS 1.3 通过，协商结果 HTTP/$output（未通过 h2 检查）"
+        result="v$family SNI $domain：证书与 TLS 1.3 通过，协商结果 HTTP/$output（未通过 h2 检查）"
     fi
     result+=$'\n'
     result+=$(_detect_cdn "$domain" "$family")
@@ -61,19 +62,70 @@ diagnose_sni() {
 }
 
 diagnose_domestic() {
-    local family host reachable=0
+    local family host reachable=0 status="" separator=""
     _info "检测服务器到国内节点的出站连通性；结果不能证明客户端到本机是否被阻断。"
     for family in 4 6; do
         reachable=0
         for host in sh-cm-dualstack.ip.zstaticcdn.com sh-cu-dualstack.ip.zstaticcdn.com sh-ct-dualstack.ip.zstaticcdn.com; do
-            if curl --noproxy '*' "-$family" -sS --connect-timeout 2 --max-time 2 -o /dev/null "http://$host/" 2>/dev/null; then
+            if timeout 3 ping "-$family" -n -c 1 -W 2 "$host" >/dev/null 2>&1; then
                 reachable=1
                 break
             fi
         done
-        if (( reachable )); then _ok "IPv$family：至少一个测试节点可达"
-        else _info "IPv$family：所选测试节点未连通，原因无法仅凭此测试确定"; fi
+        if (( reachable )); then
+            _ok "IPv$family：至少一个测试节点可达"
+            status+="$separator${green}v$family 出站可达${none}"
+        else
+            _info "IPv$family：所选测试节点未连通，原因无法仅凭此测试确定"
+            status+="$separator${yellow}v$family 未连通${none}"
+        fi
+        separator=" / "
     done
+    domestic_status="$status"
+    domestic_time=$(date +%s)
+}
+
+# Parallel startup probes return a snapshot; child-shell cache variables never leak implicitly.
+startup_probe_snapshot() (
+    umask 077
+    local stage domain family pid
+    local -a pids=() files=()
+    stage=$(mktemp -d) || exit 1
+    trap 'for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done; rm -rf "$stage"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    (
+        diagnose_domestic >/dev/null
+        jq -n --arg status "$domestic_status" --argjson time "$domestic_time" '{domestic_status:$status,domestic_time:$time}'
+    ) > "$stage/domestic.json" &
+    pids+=("$!"); files+=("$stage/domestic.json")
+    for family in 4 6; do
+        domain="$1"; [[ $family != 6 ]] || domain="$2"
+        [[ -n $domain ]] || continue
+        (
+            diagnose_sni "$domain" "$family" 1 >/dev/null || exit 1
+            local key="$family:$domain"
+            jq -n --arg key "$key" --arg result "${diagnostic_cache[$key]}" --argjson time "${diagnostic_time[$key]}" \
+                '{($key):{result:$result,time:$time}}'
+        ) > "$stage/sni$family.json" &
+        pids+=("$!"); files+=("$stage/sni$family.json")
+    done
+    for pid in "${pids[@]}"; do wait "$pid" || exit 1; done
+    pids=()
+    jq -s add "${files[@]}"
+)
+
+refresh_startup_checks() {
+    local snapshot entry key
+    _get_overview
+    snapshot=$(startup_probe_snapshot "$_ov_v4_sni" "$_ov_v6_sni") || { _fail "启动检测未完成，请在杂项菜单重试"; return 1; }
+    domestic_status=$(jq -r '.domestic_status' <<< "$snapshot")
+    domestic_time=$(jq -r '.domestic_time' <<< "$snapshot")
+    while IFS= read -r entry; do
+        key=$(jq -r '.key' <<< "$entry")
+        diagnostic_cache[$key]=$(jq -r '.value.result' <<< "$entry")
+        diagnostic_time[$key]=$(jq -r '.value.time' <<< "$entry")
+    done < <(jq -c 'to_entries[] | select(.key != "domestic_status" and .key != "domestic_time")' <<< "$snapshot")
 }
 
 follow_logs() (

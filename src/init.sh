@@ -130,13 +130,19 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip jq flock logrotate"
+is_pkg="wget curl unzip jq flock logrotate ping"
 
 check_dependencies() {
     local missing_pkgs=""
     for pkg in $is_pkg; do
         if ! command -v "$pkg" &>/dev/null; then
-            [[ $pkg == flock ]] && missing_pkgs="$missing_pkgs util-linux" || missing_pkgs="$missing_pkgs $pkg"
+            case "$pkg" in
+                flock) missing_pkgs="$missing_pkgs util-linux" ;;
+                ping)
+                    if [[ $cmd == *apt-get ]]; then missing_pkgs="$missing_pkgs iputils-ping"
+                    else missing_pkgs="$missing_pkgs iputils"; fi ;;
+                *) missing_pkgs="$missing_pkgs $pkg" ;;
+            esac
         fi
     done
     if [[ -n "$missing_pkgs" ]]; then
@@ -160,10 +166,12 @@ load core.sh
 load maintenance.sh
 load routing.sh
 load diagnostics.sh
+load status.sh
 load export.sh
 load menus.sh
 
 is_core_ver=$("$is_core_bin" version | awk 'NR==1 {print $2}')
 install_maintenance || warn "维护任务安装失败，请在更新与维护菜单重试"
 migrate_installation || warn "配置迁移未完成，原配置已保留；请查看诊断结果后重试"
+refresh_startup_checks || true
 is_main_menu

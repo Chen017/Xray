@@ -13,11 +13,14 @@ _reset_state() {
 }
 
 _get_overview() {
-    local first values cached state='{"open":[],"closed":[]}'
+    local first values cached
     _ov_port=""; _ov_v4_sni=""; _ov_v6_sni=""
     _ov_uuid=""; _ov_v4_sids=""; _ov_v6_sids=""; _ov_path=""; _ov_pbk=""
     _ov_v4_sni_status=""; _ov_v6_sni_status=""; _ov_v4_cdn_status=""; _ov_v6_cdn_status=""
     _ov_ip_blocked="${gray}未检测${none}"
+    if [[ -n ${domestic_status:-} ]]; then
+        _ov_ip_blocked="$domestic_status"
+    fi
     _ov_ip_warning=""; _ov_sni_warning=""; _ov_cdn_warning=""; _ov_relay_warn=""
     first=$(list_managed_node_configs | head -1)
     if [[ -n $first ]]; then
@@ -34,10 +37,24 @@ _get_overview() {
         _ov_path=${values[6]:-}; _ov_pbk=${values[7]:-}
     fi
     cached=${diagnostic_cache["4:$_ov_v4_sni"]:-}
-    [[ $cached != *'证书、TLS 1.3 与 h2 通过'* ]] || _ov_v4_sni_status="${green}✓ ${none}"
+    case "$cached" in
+        *'证书、TLS 1.3 与 h2 通过'*) _ov_v4_sni_status="${green}✓ ${none}" ;;
+        *'未通过'*)
+            _ov_v4_sni_status="${red}✗ ${none}"
+            _ov_sni_warning+="  [警告] v4 SNI ($_ov_v4_sni) 本机检查未通过，请检查证书、TLS 1.3 / h2 和出站网络。\n"
+            ;;
+        *'h2 未验证'*) _ov_v4_sni_status="${yellow}? ${none}" ;;
+    esac
     [[ $cached != *'疑似 CDN'* ]] || _ov_v4_cdn_status="${red}CDN ${none}"
     cached=${diagnostic_cache["6:$_ov_v6_sni"]:-}
-    [[ $cached != *'证书、TLS 1.3 与 h2 通过'* ]] || _ov_v6_sni_status="${green}✓ ${none}"
+    case "$cached" in
+        *'证书、TLS 1.3 与 h2 通过'*) _ov_v6_sni_status="${green}✓ ${none}" ;;
+        *'未通过'*)
+            _ov_v6_sni_status="${red}✗ ${none}"
+            _ov_sni_warning+="  [警告] v6 SNI ($_ov_v6_sni) 本机检查未通过，请检查证书、TLS 1.3 / h2 和出站网络。\n"
+            ;;
+        *'h2 未验证'*) _ov_v6_sni_status="${yellow}? ${none}" ;;
+    esac
     [[ $cached != *'疑似 CDN'* ]] || _ov_v6_cdn_status="${red}CDN ${none}"
     _ov_route_mode='v4上行/v6下行'
     [[ ! -f "$is_conf_dir/is_v6_uplink" ]] || _ov_route_mode='v6上行/v4下行'
@@ -50,16 +67,8 @@ _get_overview() {
         *) _ov_outbound_pref='未知' ;;
     esac
     _ov_log_level=$(jq -r '.log.loglevel // "未知"' "$is_config_json" 2>/dev/null)
-    [[ ! -f $firewall_ports_file ]] || state=$(cat "$firewall_ports_file")
-    _ov_fw_ports=$(jq -sr --argjson state "$state" '
-        ([.[] | .inbounds[]? | select(.streamSettings.security == "reality") | .port] + $state.open) |
-        unique - $state.closed | map(tostring) | join(", ")' "$is_conf_dir"/*.json 2>/dev/null)
-    _ov_fw_ports=${_ov_fw_ports:-无}
-    _ov_sys_ports="无"
-    if command -v ss >/dev/null; then
-        _ov_sys_ports=$(ss -tuln 2>/dev/null | awk '$1 ~ /^(tcp|udp)/ {n=split($5,a,":"); print a[n]}' | sort -nu | paste -sd ',' -)
-        _ov_sys_ports=${_ov_sys_ports:-无}
-    fi
+    _ov_fw_ports=$(system_firewall_summary)
+    _ov_sys_ports=$(system_listening_ports)
     _ov_relay_status=""
     if [[ -f $is_relay_state_file ]]; then
         mapfile -t values < <(jq -r '.role // "", .landing_ip // .peer_ip // "", .landing_port // .listen_port // ""' "$is_relay_state_file")
