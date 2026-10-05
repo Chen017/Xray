@@ -32,7 +32,7 @@ filter_rule_summary() {
 }
 
 system_firewall_summary() {
-    local tool rules summary ports="" policies="" checked=0 failed=0 family native=0 complex=0
+    local tool rules summary ports="" policies="" checked=0 failed=0 family complex=0
     for tool in iptables ip6tables; do
         command -v "$tool" >/dev/null || continue
         family=v4; [[ $tool != ip6tables ]] || family=v6
@@ -47,7 +47,7 @@ system_firewall_summary() {
         if rules=$(nft -j list ruleset 2>/dev/null) &&
             summary=$(jq -r -f "$is_sh_dir/src/status.jq" <<< "$rules" 2>/dev/null); then
             if [[ $summary == *CHECKED* ]]; then
-                native=1; checked=1
+                checked=1
                 ports+=$(awk '$1=="PORT" {print $2}' <<< "$summary")$'\n'
                 [[ $summary != *COMPLEX* ]] || complex=1
                 [[ $summary != *'POLICY '* ]] || policies+='nft 有默认放行链；'
@@ -63,7 +63,6 @@ system_firewall_summary() {
     printf '%s%s' "$policies" "${ports:-无显式端口}"
     (( ! failed )) || printf '（部分规则读取失败）'
     (( ! complex )) || printf '（含未展开规则）'
-    (( ! native )) || printf '（含nft）'
     printf '\n'
 }
 
