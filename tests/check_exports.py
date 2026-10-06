@@ -21,7 +21,7 @@ for mode in ['single', 'split', 'vision']:
         outbound['settings']['vnext'][0]['users'][0]['flow'] = query['flow'][0]
     else:
         extra = json.loads(query['extra'][0])
-        assert 'noSSEHeader' not in extra and 'scStreamUpServerSecs' not in extra
+        assert extra['noSSEHeader'] is True and extra['scStreamUpServerSecs'] == '20-80'
         assert extra['xmux']['maxConcurrency'] == '16-32'
         outbound['streamSettings']['xhttpSettings'] = {
             'host':query['host'][0], 'path':query['path'][0], 'mode':query['mode'][0], 'extra':extra}

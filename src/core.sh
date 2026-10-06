@@ -41,27 +41,24 @@ get_short_ids() {
 get_ip() {
     [[ $ip || $is_dont_get_ip || $is_get_ip_done ]] && return
     export is_get_ip_done=1
-    
+
     local is_local_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -Eo 'src [0-9.]+' | awk '{print $2}')
     if [[ $is_local_ip ]] && ! echo "$is_local_ip" | grep -qE '^(10|127|192\.168|172\.(1[6-9]|2[0-9]|3[0-1])|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7]))\.'; then
         export ip=$is_local_ip
     else
         export "$(_wget -T 2 -4 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     fi
-    
+
     [[ ! $ip ]] && export "$(_wget -T 2 -6 -qO- https://one.one.one.one/cdn-cgi/trace | grep ip=)" &>/dev/null
     [[ ! $ip ]] && {
-        unset is_get_ip_done
-        _fail "获取服务器 IP 失败，请检查网络后重试"
-        return 1
+        err "获取服务器 IP 失败"
     }
-    return 0
 }
 
 get_ipv6() {
     [[ $ipv6 || $is_dont_get_ip || $is_get_ipv6_done ]] && return
     export is_get_ipv6_done=1
-    
+
     local is_local_ipv6=$(ip route get 2606:4700:4700::1111 2>/dev/null | grep -Eo 'src [0-9a-fA-F:]+' | awk '{print $2}')
     if [[ $is_local_ipv6 ]] && ! echo "$is_local_ipv6" | grep -qE '^(fe80|fd|fc|::1)'; then
         export ipv6=$is_local_ipv6
@@ -251,11 +248,11 @@ _create() {
     case $1 in
     server)
         get new || return 1
-        
+
         is_config_name=${2}-${port}.json
         is_json_file=$is_conf_dir/$is_config_name
-        
-        
+
+
         [[ $(is_test domain "$v4_sni") && $(is_test domain "$v6_sni") ]] || {
             _fail "SNI 必须是有效域名，请检查 IPv4/IPv6 目标域名"
             return 1
@@ -283,9 +280,9 @@ _create() {
             _kv "分离模式:" "${is_route_mode:-v4上行/v6下行}"
             echo
         fi
-        
 
-        
+
+
         if [[ $is_new_install ]]; then
             create config.json
         else
@@ -414,9 +411,9 @@ parse_rule_input() {
     local input="$1"
     local rule_type=$(echo "$input" | cut -d',' -f1 | tr 'a-z' 'A-Z' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     local rule_val=$(echo "$input" | cut -d',' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    
+
     [[ -z "$rule_val" ]] && return 1
-    
+
     case $rule_type in
     DOMAIN)
         _rule_field="domain"
@@ -458,7 +455,7 @@ rule_to_display() {
     [[ "$tag" == "block" ]] && action="block"
     [[ "$tag" == "direct-v4" ]] && action="IPv4解析"
     [[ "$tag" == "direct-v6" ]] && action="IPv6解析"
-    
+
     local display_type=""
     case $field in
     domain)
@@ -1146,7 +1143,7 @@ relay_menu() {
         _line
         echo -e "  ${bold}${cyan}线路 / 落地互联${none}  ${gray}|${none}  ${is_core_status}"
         _line
-        
+
         local role=$(relay_get_role)
         if [[ -z "$role" ]]; then
             echo -e "  ${cyan}中继状态:${none} ${gray}未配置${none}"
@@ -1239,7 +1236,7 @@ change() {
     net=reality
     # if is_dont_show_info exist, cant show info.
     is_dont_show_info=
-    
+
     # update change list dynamically for route mode and outbound pref
     if [[ -f $is_conf_dir/is_v6_uplink ]]; then
         change_list[8]="切换分离类型 (当前: v6上行/v4下行)"
@@ -1267,24 +1264,24 @@ change() {
             fi
             [[ $(is_test port_used $is_new_port) ]] && err "无法使用 ($is_new_port) 端口，该端口已被占用"
         fi
-        
+
         [[ $is_auto ]] && get_port && is_new_port=$tmp_port
-        
+
         if [[ ! $is_new_port ]]; then
             ask list is_new_port "443 8443" "\n  为保障协议伪装的安全性和隐蔽性，仅支持如下端口:" "  请选择新端口:"
             [[ $REPLY == "0" ]] && return
         fi
-        
+
         [[ $is_new_port == $port ]] && {
             _fail "新端口与当前端口 ($port) 相同，无需切换"
             return
         }
-        
+
         if [[ $(is_test port_used $is_new_port) ]]; then
             _fail "目标端口 ($is_new_port) 已被占用，无法切换"
             return
         fi
-        
+
         add "$net" "$is_new_port"
         ;;
     1)
@@ -1344,7 +1341,7 @@ change() {
         add "$net"
         ;;
     8)
-        config_transaction toggle_route_mode
+        config_transaction toggle_route_mode && info
         ;;
     9)
         manage_custom_rules
@@ -1432,7 +1429,9 @@ add() {
     create server "$is_new_protocol" || return 1
 
     # show config info.
-    [[ $is_new_install ]] || return 0
+    info
+    # The legacy footer can return nonzero even after a successful creation.
+    return 0
 }
 
 # get config info
@@ -1441,12 +1440,11 @@ get() {
     case $1 in
     addr)
         is_addr=$host
-        if [[ -z $is_addr ]]; then
-            get_ip || return 1
+        [[ ! $is_addr ]] && {
+            get_ip
             is_addr=$ip
-        fi
-        [[ -n $is_addr ]] || { _fail "未获取到连接地址"; return 1; }
-        return 0
+            [[ $(grep ":" <<<$ip) ]] && is_addr="[$ip]"
+        }
         ;;
     new)
         [[ ! $host ]] && get_ip
@@ -1482,18 +1480,47 @@ get() {
         [[ ! $is_file_str ]] && is_file_str='.json$'
         readarray -t is_all_json <<<"$(list_managed_node_configs "$is_file_str" | head -233)" # limit max 233 lines for show.
         [[ ${#is_all_json[@]} -eq 1 && -z "${is_all_json[0]}" ]] && unset is_all_json
-        [[ ${#is_all_json[@]} -gt 0 ]] || { _fail "无法找到相关的配置文件: $2"; return 1; }
+        [[ ! $is_all_json ]] && err "无法找到相关的配置文件: $2"
         [[ ${#is_all_json[@]} -eq 1 ]] && is_config_file=${is_all_json[0]} && is_auto_get_config=1
         [[ ! $is_config_file ]] && {
-                ask get_config_file || return 1
+            [[ $is_dont_auto_exit ]] && return
+            ask get_config_file
         }
-        [[ -n $is_config_file ]] || return 1
-        return 0
         ;;
     info)
-        get file "$2" || return 1
-        [[ -n "$is_config_file" ]] || return 1
-        load_node_info
+        get file $2
+        if [[ $is_config_file ]]; then
+            is_json_str=$(cat $is_conf_dir/"$is_config_file")
+
+            # v4 parsing
+            is_protocol=$(jq -r '.inbounds[0].protocol' <<<$is_json_str)
+            port=$(jq -r '.inbounds[0].port' <<<$is_json_str)
+            uuid=$(jq -r '.inbounds[0].settings.clients[0].id' <<<$is_json_str)
+            v4_dest=$(jq -r '.inbounds[0].streamSettings.realitySettings.dest' <<<$is_json_str)
+            v4_sni=$(jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' <<<$is_json_str)
+            is_private_key=$(jq -r '.inbounds[0].streamSettings.realitySettings.privateKey' <<<$is_json_str)
+            is_public_key=$(jq -r '.inbounds[0].streamSettings.realitySettings.publicKey // ""' <<<$is_json_str)
+            v4_short_ids=$(jq -c '.inbounds[0].streamSettings.realitySettings.shortIds // [""]' <<<$is_json_str)
+
+            # fallback for older generated config without publicKey in json
+            if [[ ! $is_public_key ]]; then
+                is_public_key="Unknown(please regenerate config)"
+            fi
+
+            # v6 parsing
+            v6_dest=$(jq -r '.inbounds[1].streamSettings.realitySettings.dest // ""' <<<$is_json_str)
+            v6_sni=$(jq -r '.inbounds[1].streamSettings.realitySettings.serverNames[0] // ""' <<<$is_json_str)
+            v6_short_ids=$(jq -c '.inbounds[1].streamSettings.realitySettings.shortIds // [""]' <<<$is_json_str)
+
+            # xhttp parsing
+            v4_path=$(jq -r '.inbounds[2].streamSettings.xhttpSettings.path // ""' <<<$is_json_str)
+            v6_path=$v4_path
+
+            # core variables
+            net=reality
+            is_reality=reality
+            is_config_name=$is_config_file
+        fi
         ;;
 
     esac

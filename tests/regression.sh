@@ -51,12 +51,6 @@ for module in runtime firewall core maintenance routing diagnostics status expor
     # Match init.sh: declarations in a sourced module must survive load() returning.
     load "$module.sh"
 done
-[[ $(declare -p diagnostic_cache) == 'declare -A '* ]]
-[[ $(declare -p diagnostic_time) == 'declare -A '* ]]
-cache_test_key='4:us.kjwing.com'
-diagnostic_cache["$cache_test_key"]='startup regression sentinel'
-[[ ${diagnostic_cache[$cache_test_key]} == 'startup regression sentinel' ]]
-unset 'diagnostic_cache[$cache_test_key]'
 check() { if ! "$@"; then printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
 pass() { printf 'PASS: %s\n' "$*"; }
 get_ip() { ip=203.0.113.10; }
@@ -119,20 +113,7 @@ check config_transaction rules_apply delete 1
 check jq -e 'length==1 and .[0].domain[0]=="domain:example.com"' "$is_custom_rules_file"
 pass 'routing add/edit/move/delete updates both saved and effective rules'
 
-is_config_file=VLESS-REALITY-443.json
-load_node_info
-active_uuid="$uuid"
-outbound_mode=direct
-for mode in single split vision; do
-    mihomo_node_json "$mode" 203.0.113.10 example.com 12345678 2001:db8::10 example.org 87654321 > "$scratch/$mode.json"
-    check jq -e '.["reality-opts"]["short-id"] | type=="string"' "$scratch/$mode.json"
-    render_mihomo < "$scratch/$mode.json" > "$scratch/$mode.yaml"
-    check grep -q 'short-id: "12345678"' "$scratch/$mode.yaml"
-    export_vless_link "$mode" 203.0.113.10 example.com 12345678 2001:db8::10 example.org 87654321 > "$scratch/$mode.link"
-done
-check jq -e '.["xhttp-opts"]["reuse-settings"] != null and .["xhttp-opts"]["download-settings"]["reuse-settings"] != null and (.["xhttp-opts"]["download-settings"] | has("sockopt")|not)' "$scratch/split.json"
-pass 'all export formats preserve SID string type and XHTTP reuse settings'
-check python "$repo/tests/check_exports.py" "$scratch"
+. "$repo/tests/interactive_checks.sh"
 
 get_pbk
 transport_uuid=$("$is_core_bin" uuid)
@@ -152,24 +133,16 @@ check test "$restarts" = "$(wc -l < "$TEST_STATE/service.commands")"
 pass 'manual firewall changes do not restart the proxy'
 . "$repo/tests/tcp_probe_checks.sh"
 . "$repo/tests/status_checks.sh"
-. "$repo/tests/interactive_checks.sh"
 . "$repo/tests/entrypoint_checks.sh"
-
-# Failed DNS is unknown and multiple addresses are only a hint.
-dig() { return 1; }
-check bash -c 'true'
-check test "$(_detect_cdn example.com 4)" = '归属：无法判断（DNS 无结果或查询失败）'
-curl() { echo 'test curl must never be called by the homepage' >&2; return 99; }
-_get_overview
-pass 'homepage has no external network dependency; failed DNS is not marked safe'
-unset -f curl dig
 
 # The restored terminal layout keeps the original sections, labels and rich overview.
 menu_output="$scratch/homepage.txt"
 clear() { :; }
 is_core_name=Xray
 is_core_ver=26.3.27
-is_sh_ver=v2.6.6
+is_sh_ver=v2.6.7
+_ov_ip_blocked="${green}✓${none} "
+_ov_sni_checked=1
 is_main_menu <<< 0 > "$menu_output"
 for label in '[基础]' '[UUID]' '[ v4 ]' '[ v6 ]' '[高级]' '[状态]' 节点管理 运行控制 杂项 '查看客户端配置' '查看运行状态'; do
     check grep -Fq "$label" "$menu_output"
@@ -178,23 +151,6 @@ check test "$_ov_uuid" = "$(jq -r '.inbounds[0].settings.clients[0].id' "$is_con
 check test "$_ov_v4_sni" = us.kjwing.com
 unset -f clear
 pass 'original terminal overview, sections, numbering and exit behavior are restored'
-
-# Cached diagnostics must be scoped to the domain and address family.
-calls="$TEST_STATE/curl.calls"
-curl() {
-    if [[ $1 == --version ]]; then echo 'Features: HTTP2'; return; fi
-    echo call >> "$calls"
-    if [[ $* == *ipinfo.io* ]]; then echo 'AS123 example'; else echo -n 2; fi
-}
-dig() { echo 203.0.113.1; }
-diagnose_sni example.com 4 >/dev/null
-count=$(wc -l < "$calls")
-diagnose_sni example.com 4 >/dev/null
-check test "$count" = "$(wc -l < "$calls")"
-diagnose_sni example.org 4 >/dev/null
-check test "$count" -lt "$(wc -l < "$calls")"
-pass 'diagnostic cache invalidates when the SNI changes'
-unset -f curl dig
 
 release_fixture='{"tag_name":"v26.3.27","prerelease":false,"draft":false}'
 curl() { printf '%s\n' "$release_fixture"; }
@@ -295,14 +251,14 @@ echo 'is_sh_ver=v2.5.4' > "$is_sh_dir/xray.sh"
 echo 'external patch sentinel' > "$is_sh_dir/ipquality_patch.sh"
 ln -s "$is_sh_dir/xray.sh" "$is_sh_bin"
 script_fixture=bad-sh.zip
-if safe_update sh v2.6.6; then echo 'FAIL: invalid script accepted'; exit 1; fi
+if safe_update sh v2.6.7; then echo 'FAIL: invalid script accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=incomplete-sh.zip
-if safe_update sh v2.6.6; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
+if safe_update sh v2.6.7; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=sh.zip
-check safe_update sh v2.6.6
-check grep -q v2.6.6 "$is_sh_dir/xray.sh"
+check safe_update sh v2.6.7
+check grep -q v2.6.7 "$is_sh_dir/xray.sh"
 check grep -q 'external patch sentinel' "$is_sh_dir/ipquality_patch.sh"
 check grep -q v2.5.4 "$is_core_dir/.previous/sh/xray.sh"
 pass 'script update rejects bad syntax, keeps previous scripts and preserves external patch files'

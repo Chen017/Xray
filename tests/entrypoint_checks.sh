@@ -39,7 +39,7 @@ dig() { if [[ $* == *AAAA* ]]; then echo 2001:db8::1; else echo 203.0.113.1; fi;
 curl() {
     if [[ $1 == --version ]]; then echo 'Features: HTTP2'; return; fi
     echo curl >> "$TEST_STATE/entry-curl.calls"
-    if [[ $* == *ipinfo.io* ]]; then echo 'AS123 example'; else echo -n 2; fi
+    if [[ $* == *ipinfo.io* ]]; then echo 'AS123 example'; else echo 'SSL connection using TLSv1.3'; fi
 }
 ENV
     } > "$entry_root/environment.sh"
@@ -48,8 +48,8 @@ ENV
             <<< $'2\n1\n2\n\n0' > "$scratch/entrypoint-$launch.txt"
         check grep -q '^vless://' "$scratch/entrypoint-$launch.txt"
         check grep -q 'GFW放行: .*✓' "$scratch/entrypoint-$launch.txt"
-        check test "$(wc -l < "$TEST_STATE/entry-tcp.calls")" = "$((launch*2))"
-        check test "$(wc -l < "$TEST_STATE/entry-curl.calls")" = "$((launch*4))"
+        check test "$(wc -l < "$TEST_STATE/entry-tcp.calls")" = "$launch"
+        check test "$(wc -l < "$TEST_STATE/entry-curl.calls")" = "$((launch*2))"
     done
 ) || exit 1
 pass 'fresh real entrypoint launches refresh network/SNI probes and can export a client configuration'

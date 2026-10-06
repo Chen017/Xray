@@ -1,4 +1,4 @@
-# Common generated server template; client-only XHTTP settings live in export.sh.
+# Server XHTTP parameters restored from v2.5.4 (61744f3).
 def client($email; $vision):
     {id:$uuid, email:$email} + (if $vision then {flow:"xtls-rprx-vision"} else {} end);
 def clients($email; $relay_email; $vision):
@@ -20,10 +20,12 @@ def reality($family; $sni; $sid):
     tag:"local_xhttp_stream_up", listen:"@xhttp_inner", protocol:"vless",
     settings:{clients:clients("xhttp-stream-up";"relay-xhttp";false), decryption:"none"},
     streamSettings:{network:"xhttp", security:"none", xhttpSettings:{
-        mode:"stream-up", host:"", path:$path, noSSEHeader:true,
+        mode:"stream-up", host:"", path:$path, uplinkHTTPMethod:"PUT", noGRPCHeader:true, noSSEHeader:true,
         xPaddingBytes:"100-1000", xPaddingObfsMode:true, xPaddingPlacement:"queryInHeader",
         xPaddingMethod:"tokenish", xPaddingKey:"x_padding", xPaddingHeader:"Referer",
-        sessionPlacement:"path", seqPlacement:"path", scStreamUpServerSecs:"20-80"
+        sessionPlacement:"path", seqPlacement:"path", scStreamUpServerSecs:"20-80",
+        xmux:{maxConcurrency:"16-32", cMaxReuseTimes:0, hMaxRequestTimes:"600-900",
+              hMaxReusableSecs:"1800-3000", hKeepAlivePeriod:0}
     }},
     sniffing:{enabled:true, destOverride:["http","tls","quic"], routeOnly:true}
 }]}

@@ -1,26 +1,32 @@
 #!/bin/bash
+# The legacy probe connects to the hostname on TCP 80 without family splitting.
 (
-    getent() {
-        if [[ $1 == ahostsv6 ]]; then printf '%s\n' '::ffff:203.0.113.1 STREAM' '2001:db8::1 STREAM'
-        else echo '203.0.113.1 STREAM'; fi
-    }
+    unset _ov_ip_blocked
     timeout() {
         check test "$1" = 2
-        shift
-        if [[ $1 == bash ]]; then
-            check test "$2" = -c
-            check test "$3" = ': > /dev/tcp/"$1"/80'
-            printf '%s\n' "$5" >> "$TEST_STATE/tcp-addresses"
-        else "$@"; fi
+        check test "$2" = bash
+        check test "$3" = -c
+        check test "$4" = 'echo > /dev/tcp/sh-cm-dualstack.ip.zstaticcdn.com/80'
+        echo call >> "$TEST_STATE/legacy-tcp.calls"
     }
-    check domestic_tcp_probe example.com 4
-    check domestic_tcp_probe example.com 6
-    check test "$(cat "$TEST_STATE/tcp-addresses")" = $'203.0.113.1\n2001:db8::1'
-    getent() { echo '::ffff:203.0.113.1 STREAM'; }
-    if domestic_tcp_probe example.com 6; then echo 'FAIL: mapped IPv4 counted as IPv6'; exit 1; fi
-    getent() { return 2; }
-    if domestic_tcp_probe example.com 4; then echo 'FAIL: failed DNS accepted'; exit 1; fi
-    timeout() { return 124; }
-    if domestic_tcp_probe example.com 4; then echo 'FAIL: timeout accepted'; exit 1; fi
+    _check_ip_blocked
+    check test "$_ov_ip_blocked" = "${green}✓${none} "
+    _check_ip_blocked
+    check test "$(wc -l < "$TEST_STATE/legacy-tcp.calls")" = 1
+    unset _ov_ip_blocked
+    timeout() { echo "$4" >> "$TEST_STATE/legacy-failed-tcp.calls"; return 1; }
+    _check_ip_blocked
+    check test "$_ov_ip_blocked" = "${red}✗${none} "
+    check test "$(wc -l < "$TEST_STATE/legacy-failed-tcp.calls")" = 3
+
+    curl() { echo 'SSL connection using TLSv1.3'; }
+    dig() { echo 203.0.113.1; }
+    unset _ov_sni_checked
+    _ov_v4_sni=us.kjwing.com; _ov_v6_sni=example.org
+    _check_sni_status
+    check test "$_ov_v4_sni_status" = "${green}✓${none} "
+    check test "$_ov_v6_sni_status" = "${green}✓${none} "
+    dig() { if [[ $* == *@8.8.8.8* ]]; then echo 203.0.113.1; else echo 203.0.113.2; fi; }
+    check grep -q '^CDN:Anycast/GeoDNS|' <<< "$(_detect_cdn example.org)"
 ) || exit 1
-pass 'domestic probes connect to TCP/80 with explicit IPv4/IPv6 and reject mapped IPv4, DNS failures and timeouts'
+pass 'legacy hostname TCP 80, per-launch cache, TLS and multi-DNS checks are restored'

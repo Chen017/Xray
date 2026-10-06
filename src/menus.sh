@@ -13,15 +13,11 @@ _reset_state() {
 }
 
 _get_overview() {
-    local first values cached
+    local first values
+    _check_ip_blocked
     _ov_port=""; _ov_v4_sni=""; _ov_v6_sni=""
     _ov_uuid=""; _ov_v4_sids=""; _ov_v6_sids=""; _ov_path=""; _ov_pbk=""
-    _ov_v4_sni_status=""; _ov_v6_sni_status=""; _ov_v4_cdn_status=""; _ov_v6_cdn_status=""
-    _ov_ip_blocked="${gray}未检测${none}"
-    if [[ -n ${domestic_status:-} ]]; then
-        _ov_ip_blocked="$domestic_status"
-    fi
-    _ov_ip_warning=""; _ov_sni_warning=""; _ov_cdn_warning=""; _ov_relay_warn=""
+    _ov_relay_warn=""
     first=$(list_managed_node_configs | head -1)
     if [[ -n $first ]]; then
         mapfile -t values < <(jq -r '.inbounds[0].port // "",
@@ -36,26 +32,7 @@ _get_overview() {
         _ov_uuid=${values[3]:-}; _ov_v4_sids=${values[4]:-}; _ov_v6_sids=${values[5]:-}
         _ov_path=${values[6]:-}; _ov_pbk=${values[7]:-}
     fi
-    cached=${diagnostic_cache["4:$_ov_v4_sni"]:-}
-    case "$cached" in
-        *'证书、TLS 1.3 与 h2 通过'*) _ov_v4_sni_status="${green}✓ ${none}" ;;
-        *'未通过'*)
-            _ov_v4_sni_status="${red}✗ ${none}"
-            _ov_sni_warning+="  [警告] v4 SNI ($_ov_v4_sni) 本机检查未通过，请检查证书、TLS 1.3 / h2 和出站网络。\n"
-            ;;
-        *'h2 未验证'*) _ov_v4_sni_status="${yellow}? ${none}" ;;
-    esac
-    [[ $cached != *'疑似 CDN'* ]] || _ov_v4_cdn_status="${red}CDN ${none}"
-    cached=${diagnostic_cache["6:$_ov_v6_sni"]:-}
-    case "$cached" in
-        *'证书、TLS 1.3 与 h2 通过'*) _ov_v6_sni_status="${green}✓ ${none}" ;;
-        *'未通过'*)
-            _ov_v6_sni_status="${red}✗ ${none}"
-            _ov_sni_warning+="  [警告] v6 SNI ($_ov_v6_sni) 本机检查未通过，请检查证书、TLS 1.3 / h2 和出站网络。\n"
-            ;;
-        *'h2 未验证'*) _ov_v6_sni_status="${yellow}? ${none}" ;;
-    esac
-    [[ $cached != *'疑似 CDN'* ]] || _ov_v6_cdn_status="${red}CDN ${none}"
+    _check_sni_status
     _ov_route_mode='v4上行/v6下行'
     [[ ! -f "$is_conf_dir/is_v6_uplink" ]] || _ov_route_mode='v6上行/v4下行'
     case "$(outbound_strategy)" in
@@ -117,10 +94,12 @@ misc_menu() {
             echo
             validate_config && _ok "配置校验通过"
             if prompt_confirm "是否检测网络与目标域名？" n; then
+                unset _ov_ip_blocked _ov_sni_checked
                 _get_overview
-                [[ -z $_ov_v4_sni ]] || diagnose_sni "$_ov_v4_sni" 4 1
-                [[ -z $_ov_v6_sni ]] || diagnose_sni "$_ov_v6_sni" 6 1
-                diagnose_domestic
+                echo -e "  GFW放行: $_ov_ip_blocked"
+                echo -e "  v4 SNI: $_ov_v4_sni_status$_ov_v4_cdn_status$_ov_v4_sni"
+                echo -e "  v6 SNI: $_ov_v6_sni_status$_ov_v6_cdn_status$_ov_v6_sni"
+                echo -ne "$_ov_ip_warning$_ov_sni_warning$_ov_cdn_warning"
             fi
             pause
             ;;
