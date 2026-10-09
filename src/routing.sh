@@ -110,81 +110,198 @@ manage_custom_rules() {
 }
 
 relay_apply_landing() {
-    relay_create_landing_inbound "$1" "$2" "$3" || return 1
+    local transport_uuid="$1" decryption="$2" port="$3" encryption="$4" landing_ip="$5" peer="$6" ext_port="${7:-$3}"
+    relay_create_landing_inbound "$transport_uuid" "$decryption" "$port" || return 1
     local state
-    state=$(jq -n --arg tuuid "$1" --arg dec "$2" --argjson port "$3" --arg enc "$4" \
-        --arg lip "$5" --arg peer "$6" \
-        '{version:1,role:"landing",transport_uuid:$tuuid,decryption:$dec,listen_port:$port,encryption:$enc,landing_ip:$lip,peer_ip:$peer}') || return 1
+    state=$(jq -n --arg tuuid "$transport_uuid" --arg dec "$decryption" --argjson port "$port" \
+        --argjson ext_port "$ext_port" --arg enc "$encryption" --arg lip "$landing_ip" --arg peer "$peer" \
+        '{version:1,role:"landing",transport_uuid:$tuuid,decryption:$dec,listen_port:$port,external_port:$ext_port,encryption:$enc,landing_ip:$lip,peer_ip:$peer}') || return 1
     relay_save_state "$state"
 }
 
 relay_apply_line() {
+    local lip="$1" port="$2" tuuid="$3" enc="$4" cuuid="$5" name="$6"
+    local landings='[]'
+    if [[ -f "$is_relay_state_file" ]]; then
+        landings=$(relay_get_landings)
+    fi
+
+    local count next_id
+    count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+    next_id=$((count + 1))
+    while jq -e --arg id "$next_id" '.[] | select(.id == $id)' <<< "$landings" &>/dev/null; do
+        ((next_id++))
+    done
+    [[ -n "$name" ]] || name="落地${next_id}"
+
+    local new_landing
+    new_landing=$(jq -n --arg id "$next_id" --arg name "$name" \
+        --arg lip "$lip" --argjson port "$port" --arg tuuid "$tuuid" \
+        --arg enc "$enc" --arg cuuid "$cuuid" \
+        '{id:$id, name:$name, landing_ip:$lip, landing_port:$port, transport_uuid:$tuuid, encryption:$enc, client_uuid:$cuuid}') || return 1
+
+    local new_landings
+    new_landings=$(jq --argjson item "$new_landing" '. + [$item]' <<< "$landings") || return 1
+
     local state
-    state=$(jq -n --arg lip "$1" --argjson port "$2" --arg tuuid "$3" --arg enc "$4" --arg cuuid "$5" \
-        '{version:1,role:"line",landing_ip:$lip,landing_port:$port,transport_uuid:$tuuid,encryption:$enc,client_uuid:$cuuid}') || return 1
-    relay_save_state "$state" && relay_add_client_identity "$5" && rebuild_main_config
+    state=$(jq -n --argjson landings "$new_landings" \
+        '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid}') || return 1
+
+    relay_save_state "$state" && relay_sync_client_identities && rebuild_main_config
 }
 
 relay_apply_remove() {
     case "$1" in
-        line) relay_delete_state && relay_remove_client_identity && rebuild_main_config ;;
-        landing) relay_remove_landing_inbound && relay_delete_state ;;
+        line)
+            local target_id="${2:-all}"
+            if [[ ! -f "$is_relay_state_file" ]]; then
+                return 0
+            fi
+            local landings=$(relay_get_landings)
+            local remaining='[]'
+            if [[ "$target_id" != "all" && -n "$target_id" ]]; then
+                remaining=$(jq --arg id "$target_id" '[.[] | select(.id != $id)]' <<< "$landings")
+            fi
+            local count=$(jq -r 'length' <<< "$remaining" 2>/dev/null || echo 0)
+            if (( count == 0 )); then
+                relay_delete_state && relay_remove_client_identity && rebuild_main_config
+            else
+                local state
+                state=$(jq -n --argjson landings "$remaining" \
+                    '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid}') || return 1
+                relay_save_state "$state" && relay_sync_client_identities && rebuild_main_config
+            fi
+            ;;
+        landing)
+            relay_remove_landing_inbound && relay_delete_state
+            ;;
         *) return 1 ;;
     esac
 }
 
 relay_setup_landing() {
-    local peer landing_ip port transport_uuid
+    local peer landing_ip port ext_port transport_uuid default_port
     echo
     _section "配置本机为落地机"
-    command -v iptables >/dev/null || { _fail "请先安装 iptables，以限制中继来源 IP"; return 1; }
+    if ! firewall_tool_available iptables; then
+        _info "当前环境不支持或缺少 iptables 权限（如无特权 LXC 容器），将跳过防火墙来源 IP 限制"
+    fi
     relay_generate_vlessenc || { _fail "内核不支持所需的 VLESS Encryption，请先更新"; return 1; }
     echo
-    echo -e "  ${cyan}落地机将只接受指定线路机 IPv4 的中继连接。${none}"
-    prompt_input "请输入线路机 IPv4 地址" peer
-    [[ $peer != 0 ]] || return
-    relay_validate_ipv4 "$peer" || { _fail "无效的线路机 IPv4"; return 1; }
+    echo -e "  ${cyan}落地机用于接收线路机的中继流量。${none}"
+    prompt_input "请输入线路机 IPv4 地址 (用于防火墙白名单，若无防火墙权限直接回车跳过)" peer ""
+    if [[ -n "$peer" && "$peer" != "0" ]]; then
+        relay_validate_ipv4 "$peer" || { _fail "无效的线路机 IPv4"; return 1; }
+    else
+        peer=""
+    fi
     get_ip || return 1
     landing_ip="$ip"
-    if ! relay_validate_ipv4 "$landing_ip"; then
-        prompt_input "本机公网 IPv4（0 返回）" landing_ip
-    fi
-    relay_validate_ipv4 "$landing_ip" && [[ $landing_ip != "$peer" ]] || { _fail "落地 IPv4 无效或与线路机相同"; return 1; }
-    port=$(relay_get_random_port) || { _fail "没有可用中继端口"; return 1; }
+    prompt_input "落地机公网 IPv4 地址 (NAT机器请填写公网IP或域名)" landing_ip "$landing_ip"
+    [[ -n "$landing_ip" && "$landing_ip" != "0" ]] || { _fail "落地机公网 IP 不能为空"; return 1; }
+    [[ -z "$peer" || "$landing_ip" != "$peer" ]] || { _fail "落地公网 IP 不能与线路机相同"; return 1; }
+
+    default_port=$(relay_get_random_port 2>/dev/null) || default_port=30443
+    prompt_input "落地机监听端口 [NAT 机器请填写映射端口]" port "$default_port"
+    [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || { _fail "无效端口"; return 1; }
+
+    prompt_input "落地机公网外网端口 [如果与监听端口相同直接回车]" ext_port "$port"
+    [[ "$ext_port" =~ ^[0-9]+$ ]] && (( ext_port >= 1 && ext_port <= 65535 )) || { _fail "无效外网端口"; return 1; }
+
     get_uuid
     transport_uuid="$tmp_uuid"
-    if config_transaction relay_apply_landing "$transport_uuid" "$vlessenc_decryption" "$port" "$vlessenc_encryption" "$landing_ip" "$peer"; then
-        _ok "落地中继已配置，只有 $peer 可以访问 TCP $port"
+    if config_transaction relay_apply_landing "$transport_uuid" "$vlessenc_decryption" "$port" "$vlessenc_encryption" "$landing_ip" "$peer" "$ext_port"; then
+        if [[ -n "$peer" ]] && firewall_tool_available iptables; then
+            _ok "落地中继已配置，只有 $peer 可以访问 TCP $port"
+        else
+            _ok "落地中继已配置，监听端口: TCP $port (公网外网端口: $ext_port)"
+        fi
+        echo
         _info "在线路机导入以下链接："
-        relay_build_link "$transport_uuid" "$landing_ip" "$port" "$vlessenc_encryption"
+        echo
+        _green "$(relay_build_link "$transport_uuid" "$landing_ip" "$ext_port" "$vlessenc_encryption")"
+        echo
     fi
 }
 
 relay_setup_line() {
-    local input
+    local input landing_name
     echo
-    _section "配置本机为线路机"
+    _section "配置线路机绑定落地机"
     relay_generate_vlessenc || { _fail "内核不支持所需的 VLESS Encryption，请先更新"; return 1; }
     echo
     echo -e "  ${cyan}请输入在落地机上生成的中继链接 (vless://...):${none}"
     prompt_input "中继链接" input
     [[ $input != 0 ]] || return
     relay_parse_link "$input" || { _fail "链接需要合法 IPv4、VLESS 加密及 RAW/Vision 参数"; return 1; }
+
+    local landings=$(relay_get_landings)
+    local dup=$(jq -r --arg lip "$parsed_landing_ip" --argjson lport "$parsed_landing_port" \
+        '.[] | select(.landing_ip == $lip and .landing_port == $lport) | .name' <<< "$landings" 2>/dev/null)
+    if [[ -n "$dup" ]]; then
+        _fail "已绑定过该落地机 ($parsed_landing_ip:$parsed_landing_port)，备注: $dup"
+        return 1
+    fi
+
+    local count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+    prompt_input "落地机备注名称 (例如 香港/日本/落地$((count+1)))" landing_name "落地$((count+1))"
+    [[ -n "$landing_name" && "$landing_name" != "0" ]] || landing_name="落地$((count+1))"
+
     get_uuid
-    if config_transaction relay_apply_line "$parsed_landing_ip" "$parsed_landing_port" "$parsed_transport_uuid" "$parsed_encryption" "$tmp_uuid"; then
-        _ok "线路绑定成功，在导出客户端配置时选择经落地"
+    if config_transaction relay_apply_line "$parsed_landing_ip" "$parsed_landing_port" "$parsed_transport_uuid" "$parsed_encryption" "$tmp_uuid" "$landing_name"; then
+        _ok "成功绑定落地机 [${landing_name}] (${parsed_landing_ip}:${parsed_landing_port})"
+        _info "在导出客户端配置时可选择经由 [${landing_name}] 出口"
     fi
 }
 
 relay_remove_line() {
     echo
-    _section "解除线路机绑定"
-    prompt_confirm "确认解除与当前落地机的绑定吗？" n || return
-    config_transaction relay_apply_remove line
+    _section "解除线路机落地绑定"
+    local landings=$(relay_get_landings)
+    local count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+    if (( count == 0 )); then
+        _info "当前未绑定任何落地机"
+        return
+    elif (( count == 1 )); then
+        local lname=$(jq -r '.[0].name // "落地机"' <<< "$landings")
+        prompt_confirm "确认解除与落地机 [${lname}] 的绑定吗？" n || return
+        config_transaction relay_apply_remove line all
+    else
+        echo -e "  当前已绑定的落地机列表:"
+        local i l_name l_ip l_port
+        for (( i=0; i<count; i++ )); do
+            l_name=$(jq -r ".[$i].name" <<< "$landings")
+            l_ip=$(jq -r ".[$i].landing_ip" <<< "$landings")
+            l_port=$(jq -r ".[$i].landing_port" <<< "$landings")
+            echo -e "  ${green}$((i+1)))${none} [${cyan}${l_name}${none}] ${l_ip}:${l_port}"
+        done
+        echo
+        local choice
+        prompt_input "请选择要解除的序号 [输入 A 解除全部, 0 返回]" choice "0"
+        [[ "$choice" != "0" && -n "$choice" ]] || return
+        if [[ "${choice^^}" == "A" ]]; then
+            prompt_confirm "确认解除所有落地机的绑定吗？" n || return
+            config_transaction relay_apply_remove line all
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+            local sel_idx=$((choice - 1))
+            local sel_id=$(jq -r ".[$sel_idx].id" <<< "$landings")
+            local sel_name=$(jq -r ".[$sel_idx].name" <<< "$landings")
+            prompt_confirm "确认解除落地机 [${sel_name}] 的绑定吗？" n || return
+            config_transaction relay_apply_remove line "$sel_id"
+        else
+            _fail "无效的选项"
+        fi
+    fi
 }
+
 relay_remove_landing() {
     echo
     _section "解除落地机配置"
     prompt_confirm "确认解除落地机中继配置吗？" n || return
     config_transaction relay_apply_remove landing
+}
+
+install_landing_standalone() {
+    _create config.json || return 1
+    relay_setup_landing || return 1
 }

@@ -54,5 +54,47 @@
     _reset_state
     info <<< $'2\n3\n1\n2' > "$scratch/relay-export.txt" || true
     check grep -q '^vless://11111111-1111-4111-8111-111111111111@203.0.113.10:' "$scratch/relay-export.txt"
+
+    # Multi-landing binding tests: add a second landing machine
+    relay_apply_line "203.0.113.30" 30002 "22222222-2222-4222-8222-222222222222" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "33333333-3333-4333-8333-333333333333" "日本落地"
+    landings_check=$(relay_get_landings)
+    check test "$(jq -r 'length' <<< "$landings_check")" = "2"
+    check jq -e '.outbounds[] | select(.tag == "relay-out-1" and .settings.address == "203.0.113.20")' "$is_config_json"
+    check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "203.0.113.30")' "$is_config_json"
+    check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
+
+    # Export selecting second landing
+    _reset_state
+    info <<< $'3\n3\n1\n2' > "$scratch/relay-export-second.txt" || true
+    check grep -q '^vless://33333333-3333-4333-8333-333333333333@203.0.113.10:' "$scratch/relay-export-second.txt"
+    check grep -q '#Premium-Landing-日本落地' "$scratch/relay-export-second.txt"
+
+    # Removal of second landing only
+    relay_apply_remove line "2"
+    landings_after_rm=$(relay_get_landings)
+    check test "$(jq -r 'length' <<< "$landings_after_rm")" = "1"
+    check jq -e '.outbounds[] | select(.tag == "relay-out-1")' "$is_config_json"
+    if jq -e '.outbounds[] | select(.tag == "relay-out-2")' "$is_config_json" >/dev/null; then
+        echo 'FAIL: removed landing outbound still present'
+        exit 1
+    fi
+
+    # Standalone landing config test without xhttp
+    scratch_landing="$scratch/pure_landing"
+    mkdir -p "$scratch_landing/conf"
+    (
+        is_conf_dir="$scratch_landing/conf"
+        is_config_json="$scratch_landing/config.json"
+        is_relay_state_file="$scratch_landing/relay.json"
+        _create config.json
+        relay_apply_landing "44444444-4444-4444-8444-444444444444" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" 28888 "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "198.51.100.5" "" 38888
+        check test -f "$scratch_landing/conf/99_relay_in.json"
+        check test ! -f "$scratch_landing/conf/VLESS-REALITY-*.json"
+        check jq -e '.inbounds[0].port == 28888 and .inbounds[0].tag == "relay-in"' "$scratch_landing/conf/99_relay_in.json"
+        check test "$(jq -r '.external_port' "$is_relay_state_file")" = "38888"
+        # Test firewall degradation when iptables tool is unavailable
+        iptables() { return 1; }
+        check firewall_sync
+    )
 ) || exit 1
-pass 'restored exports cover all three modes, both formats, reverse split, IPv6 and relay identities'
+pass 'restored exports cover all three modes, both formats, reverse split, IPv6, multi-landing and pure landing'

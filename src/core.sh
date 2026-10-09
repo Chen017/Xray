@@ -268,6 +268,9 @@ _create() {
             --argjson sid4 "${v4_short_ids:-$is_short_ids}" --argjson sid6 "${v6_short_ids:-$is_short_ids}" \
             -f "$is_sh_dir/src/node.jq") || return 1
         atomic_json "$is_json_file" "$is_new_json" || return 1
+        if [[ $(relay_get_role) == line ]]; then
+            relay_sync_client_identities || return 1
+        fi
         if [[ -n "$is_config_file" && $is_config_file != "$is_config_name" ]]; then
             rm -f "$is_conf_dir/$is_config_file" || return 1
         fi
@@ -381,6 +384,26 @@ relay_get_role() {
     fi
 }
 
+relay_get_landings() {
+    [[ -f "$is_relay_state_file" ]] || { echo '[]'; return 0; }
+    jq -c '
+        if .landings and (.landings | type == "array") then
+            .landings
+        elif .landing_ip then
+            [{
+                id: "1",
+                name: (.name // "默认落地"),
+                landing_ip: .landing_ip,
+                landing_port: (.landing_port // .listen_port // 0),
+                transport_uuid: (.transport_uuid // ""),
+                encryption: (.encryption // ""),
+                client_uuid: (.client_uuid // "")
+            }]
+        else
+            []
+        end
+    ' "$is_relay_state_file" 2>/dev/null || echo '[]'
+}
 
 relay_save_state() {
     atomic_json "$is_relay_state_file" "$1"
@@ -492,14 +515,14 @@ rebuild_main_config() {
     [[ ! -f $is_config_json ]] && return 1
     local rules_json=$(load_custom_rules)
     local role=$(relay_get_role)
-    local relay_state=""
+    local landings_json='[]'
     if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
-        relay_state=$(cat "$is_relay_state_file" 2>/dev/null)
+        landings_json=$(relay_get_landings)
     fi
 
     # 1. Update outbounds:
-    # Ensure: direct (0), direct-v4, direct-v6, block, and if line: relay-out
-    local tmp_json=$(jq --arg role "$role" --argjson rstate "${relay_state:-null}" '
+    # Ensure: direct (0), direct-v4, direct-v6, block, and if line: relay-out-<id> for each landing
+    local tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" '
         (if (.outbounds | length == 0) or (.outbounds[0].tag != "direct") then
             .outbounds = ([((.outbounds[]? | select(.tag == "direct")) // {"protocol":"freedom","tag":"direct","settings":{"domainStrategy":"UseIPv4v6"}})] + (.outbounds | map(select(.tag != "direct"))))
         else . end) |
@@ -512,48 +535,58 @@ rebuild_main_config() {
         (if (.outbounds | map(select(.tag == "block")) | length) == 0 then
             .outbounds += [{"protocol": "blackhole", "tag": "block"}]
         else . end) |
-        (if $role == "line" and $rstate != null then
-            (.outbounds | map(select(.tag != "relay-out"))) + [{
-                "tag": "relay-out",
-                "protocol": "vless",
-                "settings": {
-                    "address": $rstate.landing_ip,
-                    "port": $rstate.landing_port,
-                    "id": $rstate.transport_uuid,
-                    "encryption": $rstate.encryption,
-                    "flow": "xtls-rprx-vision"
-                },
-                "streamSettings": {
-                    "network": "raw",
-                    "security": "none"
-                },
-                "mux": {
-                    "enabled": false
-                },
-                "targetStrategy": "AsIs"
-            }]
-        else
-            .outbounds | map(select(.tag != "relay-out"))
-        end) as $new_outbounds |
+        (
+            (.outbounds | map(select((.tag != "relay-out") and (.tag | startswith("relay-out-") | not)))) +
+            (if $role == "line" and ($landings | length > 0) then
+                [
+                    $landings[] | {
+                        "tag": ("relay-out-" + (.id | tostring)),
+                        "protocol": "vless",
+                        "settings": {
+                            "address": .landing_ip,
+                            "port": (.landing_port | tonumber),
+                            "id": .transport_uuid,
+                            "encryption": .encryption,
+                            "flow": "xtls-rprx-vision"
+                        },
+                        "streamSettings": {
+                            "network": "raw",
+                            "security": "none"
+                        },
+                        "mux": {
+                            "enabled": false
+                        },
+                        "targetStrategy": "AsIs"
+                    }
+                ]
+            else [] end)
+        ) as $new_outbounds |
         .outbounds = $new_outbounds
     ' "$is_config_json") || return 1
     [[ -n "$tmp_json" ]] || return 1
 
     # 2. Update routing.rules:
-    # 1. relay user -> relay-out (if role == line)
+    # 1. relay users -> relay-out-<id> (if role == line)
     # 2. custom rules
     # 3. base block rules
-    tmp_json=$(jq --arg role "$role" --argjson custom "$rules_json" '
-        (if $role == "line" then
+    tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" --argjson custom "$rules_json" '
+        (if $role == "line" and ($landings | length > 0) then
             [
-                {
+                $landings[] as $item | {
                     "type": "field",
-                    "user": [
-                        "relay-vision-v4",
-                        "relay-vision-v6",
-                        "relay-xhttp"
-                    ],
-                    "outboundTag": "relay-out"
+                    "user": (
+                        [
+                            ("relay-" + ($item.id | tostring) + "-vision-v4"),
+                            ("relay-" + ($item.id | tostring) + "-vision-v6"),
+                            ("relay-" + ($item.id | tostring) + "-xhttp")
+                        ] +
+                        (if ($item.id == "1" or $item == ($landings[0])) then [
+                            "relay-vision-v4",
+                            "relay-vision-v6",
+                            "relay-xhttp"
+                        ] else [] end)
+                    ),
+                    "outboundTag": ("relay-out-" + ($item.id | tostring))
                 }
             ]
         else [] end) as $relay_rules |
@@ -875,28 +908,69 @@ relay_remove_landing_inbound() {
     rm -f "$is_conf_dir/99_relay_in.json"
 }
 
-relay_add_client_identity() {
-    local c_uuid="$1"
-    [[ -z "$c_uuid" ]] && return 1
+relay_sync_client_identities() {
+    local role=$(relay_get_role)
+    [[ "$role" == "line" ]] || return 0
+    local landings_json
+    landings_json=$(relay_get_landings)
+
     for conf_name in $(list_managed_node_configs); do
         local conf_path="$is_conf_dir/$conf_name"
         [[ -f "$conf_path" ]] || continue
-        local updated=$(jq --arg r_uuid "$c_uuid" '
+        local updated
+        updated=$(jq --argjson landings "$landings_json" '
             .inbounds |= map(
                 if (.tag | startswith("public_") and endswith("_v4")) then
                     .settings.clients = (
-                        (.settings.clients | map(select(.email != "relay-vision-v4"))) +
-                        [{"id": $r_uuid, "flow": "xtls-rprx-vision", "email": "relay-vision-v4"}]
+                        (.settings.clients | map(select(.email | startswith("relay-") | not))) +
+                        [
+                            $landings[] | {
+                                id: .client_uuid,
+                                flow: "xtls-rprx-vision",
+                                email: ("relay-" + (.id | tostring) + "-vision-v4")
+                            }
+                        ] +
+                        (if ($landings | length > 0) then [
+                            {
+                                id: $landings[0].client_uuid,
+                                flow: "xtls-rprx-vision",
+                                email: "relay-vision-v4"
+                            }
+                        ] else [] end)
                     )
                 elif (.tag | startswith("public_") and endswith("_v6")) then
                     .settings.clients = (
-                        (.settings.clients | map(select(.email != "relay-vision-v6"))) +
-                        [{"id": $r_uuid, "flow": "xtls-rprx-vision", "email": "relay-vision-v6"}]
+                        (.settings.clients | map(select(.email | startswith("relay-") | not))) +
+                        [
+                            $landings[] | {
+                                id: .client_uuid,
+                                flow: "xtls-rprx-vision",
+                                email: ("relay-" + (.id | tostring) + "-vision-v6")
+                            }
+                        ] +
+                        (if ($landings | length > 0) then [
+                            {
+                                id: $landings[0].client_uuid,
+                                flow: "xtls-rprx-vision",
+                                email: "relay-vision-v6"
+                            }
+                        ] else [] end)
                     )
                 elif (.tag == "local_xhttp_stream_up") then
                     .settings.clients = (
-                        (.settings.clients | map(select(.email != "relay-xhttp"))) +
-                        [{"id": $r_uuid, "email": "relay-xhttp"}]
+                        (.settings.clients | map(select(.email | startswith("relay-") | not))) +
+                        [
+                            $landings[] | {
+                                id: .client_uuid,
+                                email: ("relay-" + (.id | tostring) + "-xhttp")
+                            }
+                        ] +
+                        (if ($landings | length > 0) then [
+                            {
+                                id: $landings[0].client_uuid,
+                                email: "relay-xhttp"
+                            }
+                        ] else [] end)
                     )
                 else . end
             )
@@ -907,6 +981,11 @@ relay_add_client_identity() {
             return 1
         fi
     done
+    return 0
+}
+
+relay_add_client_identity() {
+    relay_sync_client_identities
 }
 
 relay_remove_client_identity() {
@@ -917,9 +996,7 @@ relay_remove_client_identity() {
             .inbounds |= map(
                 if .settings.clients then
                     .settings.clients |= map(select(
-                        .email != "relay-vision-v4" and
-                        .email != "relay-vision-v6" and
-                        .email != "relay-xhttp"
+                        .email | startswith("relay-") | not
                     ))
                 else . end
             )
@@ -939,30 +1016,15 @@ relay_remove_client_identity() {
 # ─── relay operations & menu ─────────────────────────────
 
 
-relay_test() (
-    echo
-    _section "中继连通性测试"
-    local role=$(relay_get_role)
-    if [[ "$role" != "line" ]]; then
-        _fail "仅线路机支持执行连通测试"
-        return 1
-    fi
-    if [[ ! -f $is_relay_state_file ]]; then
-        _fail "未找到中继状态文件"
-        return 1
-    fi
-
-    local landing_ip=$(jq -r '.landing_ip // empty' "$is_relay_state_file")
-    local landing_port=$(jq -r '.landing_port // empty' "$is_relay_state_file")
-    local transport_uuid=$(jq -r '.transport_uuid // empty' "$is_relay_state_file")
-    local encryption=$(jq -r '.encryption // empty' "$is_relay_state_file")
+_do_single_relay_test() {
+    local landing_ip="$1" landing_port="$2" transport_uuid="$3" encryption="$4" landing_name="${5:-落地机}"
     relay_validate_ipv4 "$landing_ip" && relay_validate_port "$landing_port" &&
         relay_validate_uuid "$transport_uuid" && relay_validate_vless_encryption "$encryption" || {
-        _fail "中继状态参数无效，请重新检查绑定配置"
+        _fail "[$landing_name] 中继状态参数无效，请检查绑定配置"
         return 1
     }
 
-    _step "正在执行基础 TCP 连通性测试 (${landing_ip}:${landing_port}) ..."
+    _step "正在对 [$landing_name] 执行基础 TCP 连通性测试 (${landing_ip}:${landing_port}) ..."
     local tcp_ok=0
     if timeout 3 bash -c "echo > /dev/tcp/${landing_ip}/${landing_port}" &>/dev/null; then
         tcp_ok=1
@@ -970,13 +1032,13 @@ relay_test() (
         tcp_ok=1
     fi
     if [[ $tcp_ok -eq 0 ]]; then
-        _fail "TCP 不可达 (${landing_ip}:${landing_port})"
+        _fail "[$landing_name] TCP 不可达 (${landing_ip}:${landing_port})"
         _info "请检查落地机防火墙是否放行线路机 IP，或落地机 Xray 服务是否正在运行。"
         return 1
     fi
-    _ok "TCP 连接正常"
+    _ok "[$landing_name] TCP 连接正常"
 
-    _step "正在执行完整链路端到端出口测试..."
+    _step "正在对 [$landing_name] 执行完整链路端到端出口测试..."
     local test_socks_port=""
     local candidate
     local attempt
@@ -1054,13 +1116,95 @@ EOF
     test_pid=""
 
     if [[ "$exit_ip" == "$landing_ip" ]]; then
-        _ok "完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
+        _ok "[$landing_name] 完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
     elif [[ -n "$exit_ip" ]]; then
-        warn "链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
+        warn "[$landing_name] 链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
     else
-        _fail "完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
+        _fail "[$landing_name] 完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
+        return 1
     fi
-)
+}
+
+relay_test() {
+    echo
+    _section "中继连通性测试"
+    local role=$(relay_get_role)
+    if [[ "$role" != "line" ]]; then
+        _fail "仅线路机支持执行连通测试"
+        return 1
+    fi
+    if [[ ! -f $is_relay_state_file ]]; then
+        _fail "未找到中继状态文件"
+        return 1
+    fi
+
+    local landings=$(relay_get_landings)
+    local count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+    if (( count == 0 )); then
+        _fail "未绑定任何落地机"
+        return 1
+    elif (( count == 1 )); then
+        local lip=$(jq -r '.[0].landing_ip' <<< "$landings")
+        local lport=$(jq -r '.[0].landing_port' <<< "$landings")
+        local tuuid=$(jq -r '.[0].transport_uuid' <<< "$landings")
+        local enc=$(jq -r '.[0].encryption' <<< "$landings")
+        local lname=$(jq -r '.[0].name // "落地机"' <<< "$landings")
+        _do_single_relay_test "$lip" "$lport" "$tuuid" "$enc" "$lname"
+    else
+        echo -e "  当前已绑定的落地机列表:"
+        local i l_name l_ip l_port
+        for (( i=0; i<count; i++ )); do
+            l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings")
+            l_ip=$(jq -r ".[$i].landing_ip" <<< "$landings")
+            l_port=$(jq -r ".[$i].landing_port" <<< "$landings")
+            echo -e "  ${green}$((i+1)))${none} [${cyan}${l_name}${none}] ${l_ip}:${l_port}"
+        done
+        echo
+        local choice
+        prompt_input "请选择测试序号 [输入 A 测试全部, 0 返回]" choice "A"
+        [[ "$choice" != "0" && -n "$choice" ]] || return
+        if [[ "${choice^^}" == "A" ]]; then
+            for (( i=0; i<count; i++ )); do
+                echo
+                local lip=$(jq -r ".[$i].landing_ip" <<< "$landings")
+                local lport=$(jq -r ".[$i].landing_port" <<< "$landings")
+                local tuuid=$(jq -r ".[$i].transport_uuid" <<< "$landings")
+                local enc=$(jq -r ".[$i].encryption" <<< "$landings")
+                local lname=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings")
+                _do_single_relay_test "$lip" "$lport" "$tuuid" "$enc" "$lname"
+            done
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+            local sel_idx=$((choice - 1))
+            local lip=$(jq -r ".[$sel_idx].landing_ip" <<< "$landings")
+            local lport=$(jq -r ".[$sel_idx].landing_port" <<< "$landings")
+            local tuuid=$(jq -r ".[$sel_idx].transport_uuid" <<< "$landings")
+            local enc=$(jq -r ".[$sel_idx].encryption" <<< "$landings")
+            local lname=$(jq -r ".[$sel_idx].name // \"落地$((sel_idx+1))\"" <<< "$landings")
+            _do_single_relay_test "$lip" "$lport" "$tuuid" "$enc" "$lname"
+        else
+            _fail "无效的选项"
+        fi
+    fi
+}
+
+_show_single_landing_info() {
+    local landings="$1" idx="$2"
+    local lname lip lport tuuid enc cuuid
+    lname=$(jq -r ".[$idx].name // \"落地$((idx+1))\"" <<< "$landings")
+    lip=$(jq -r ".[$idx].landing_ip // \"\"" <<< "$landings")
+    lport=$(jq -r ".[$idx].landing_port // \"\"" <<< "$landings")
+    tuuid=$(jq -r ".[$idx].transport_uuid // \"\"" <<< "$landings")
+    enc=$(jq -r ".[$idx].encryption // \"\"" <<< "$landings")
+    cuuid=$(jq -r ".[$idx].client_uuid // \"\"" <<< "$landings")
+
+    _kv "备注名称:" "$lname"
+    _kv "角色:" "线路机 (line)"
+    _kv "落地 IP:" "$lip"
+    _kv "落地端口:" "$lport"
+    _kv "中继传输 UUID:" "$tuuid"
+    _kv "专属客户端 UUID:" "$cuuid"
+    _kv "加密参数:" "$enc"
+}
 
 relay_view_info_line() {
     echo
@@ -1069,20 +1213,37 @@ relay_view_info_line() {
         _fail "未找到中继状态文件"
         return 1
     fi
-    local lip=$(jq -r '.landing_ip // ""' "$is_relay_state_file")
-    local lport=$(jq -r '.landing_port // ""' "$is_relay_state_file")
-    local tuuid=$(jq -r '.transport_uuid // ""' "$is_relay_state_file")
-    local enc=$(jq -r '.encryption // ""' "$is_relay_state_file")
-    local cuuid=$(jq -r '.client_uuid // ""' "$is_relay_state_file")
-
-    _kv "角色:" "线路机 (line)"
-    _kv "落地 IP:" "$lip"
-    _kv "落地端口:" "$lport"
-    _kv "中继传输 UUID:" "$tuuid"
-    _kv "客户端专用 UUID:" "$cuuid"
-    echo
-    _kv "加密参数:" "$enc"
-    echo
+    local landings=$(relay_get_landings)
+    local count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+    if (( count == 0 )); then
+        _fail "未绑定任何落地机"
+        return 1
+    elif (( count == 1 )); then
+        _show_single_landing_info "$landings" 0
+    else
+        echo -e "  ${cyan}已绑定 $count 台落地机:${none}"
+        local i l_name l_ip l_port
+        for (( i=0; i<count; i++ )); do
+            l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings")
+            l_ip=$(jq -r ".[$i].landing_ip" <<< "$landings")
+            l_port=$(jq -r ".[$i].landing_port" <<< "$landings")
+            echo -e "  ${green}$((i+1)))${none} [${cyan}${l_name}${none}] ${l_ip}:${l_port}"
+        done
+        echo
+        local choice
+        prompt_input "请选择要查看的落地机序号 [输入 A 查看全部, 0 返回]" choice "A"
+        [[ "$choice" != "0" && -n "$choice" ]] || return
+        if [[ "${choice^^}" == "A" ]]; then
+            for (( i=0; i<count; i++ )); do
+                echo
+                _show_single_landing_info "$landings" "$i"
+            done
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+            _show_single_landing_info "$landings" "$((choice - 1))"
+        else
+            _fail "无效的选项"
+        fi
+    fi
 }
 
 relay_view_info_landing() {
@@ -1094,15 +1255,20 @@ relay_view_info_landing() {
     fi
     local pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file")
     local lport=$(jq -r '.listen_port // ""' "$is_relay_state_file")
+    local ext_port=$(jq -r '.external_port // .listen_port // ""' "$is_relay_state_file")
     local tuuid=$(jq -r '.transport_uuid // ""' "$is_relay_state_file")
     local dec=$(jq -r '.decryption // ""' "$is_relay_state_file")
     local enc=$(jq -r '.encryption // ""' "$is_relay_state_file")
-
     local landing_pub_ip=$(jq -r '.landing_ip // ""' "$is_relay_state_file")
 
     _kv "角色:" "落地机 (landing)"
-    _kv "放行线路 IP:" "$pip"
+    if [[ -n "$pip" ]]; then
+        _kv "放行线路 IP:" "$pip"
+    else
+        _kv "放行线路 IP:" "未限制 (无防火墙限制或未指定)"
+    fi
     _kv "监听端口:" "$lport"
+    [[ "$ext_port" == "$lport" ]] || _kv "外网端口:" "$ext_port"
     _kv "中继传输 UUID:" "$tuuid"
     echo
     _kv "落地解密参数:" "$dec"
@@ -1129,7 +1295,7 @@ relay_view_info_landing() {
         return 1
     fi
 
-    local relay_link=$(relay_build_link "$tuuid" "$landing_pub_ip" "$lport" "$enc")
+    local relay_link=$(relay_build_link "$tuuid" "$landing_pub_ip" "$ext_port" "$enc")
     _step "中继导入链接:"
     echo
     _green "$relay_link"
@@ -1166,29 +1332,40 @@ relay_menu() {
                 ;;
             esac
         elif [[ "$role" == "line" ]]; then
-            local r_lip=$(jq -r '.landing_ip // ""' "$is_relay_state_file" 2>/dev/null)
-            local r_lport=$(jq -r '.landing_port // ""' "$is_relay_state_file" 2>/dev/null)
-            echo -e "  ${cyan}角色:${none} ${green}线路机${none}"
-            echo -e "  ${cyan}落地:${none} ${green}${r_lip}:${r_lport}${none}"
+            local landings_json=$(relay_get_landings)
+            local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
+            echo -e "  ${cyan}角色:${none} ${green}线路机${none} (已绑定 ${green}${count}${none} 台落地机)"
+            local i l_name l_ip l_port
+            for (( i=0; i<count; i++ )); do
+                l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings_json")
+                l_ip=$(jq -r ".[$i].landing_ip // \"\"" <<< "$landings_json")
+                l_port=$(jq -r ".[$i].landing_port // \"\"" <<< "$landings_json")
+                echo -e "  ${green}$((i+1)))${none} [${cyan}${l_name}${none}] ${l_ip}:${l_port}"
+            done
             echo
             _section "操作"
-            _menu 1 "查看落地信息"
-            _menu 2 "测试落地"
-            _menu 3 "解除线路绑定"
+            _menu 1 "添加新落地机绑定"
+            _menu 2 "查看落地信息"
+            _menu 3 "测试落地连通性"
+            _menu 4 "解除落地绑定"
             echo
-            echo -ne "  请选择 [${green}1-3${none}] [${red}0 返回主菜单${none}]: "
+            echo -ne "  请选择 [${green}1-4${none}] [${red}0 返回主菜单${none}]: "
             read -r REPLY || return 1
             [[ "$REPLY" == "0" ]] && return
             case $REPLY in
             1)
-                relay_view_info_line
+                relay_setup_line
                 pause
                 ;;
             2)
-                relay_test
+                relay_view_info_line
                 pause
                 ;;
             3)
+                relay_test
+                pause
+                ;;
+            4)
                 relay_remove_line
                 pause
                 ;;
@@ -1196,9 +1373,18 @@ relay_menu() {
         elif [[ "$role" == "landing" ]]; then
             local r_pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file" 2>/dev/null)
             local r_lport=$(jq -r '.listen_port // ""' "$is_relay_state_file" 2>/dev/null)
+            local r_ext=$(jq -r '.external_port // .listen_port // ""' "$is_relay_state_file" 2>/dev/null)
             echo -e "  ${cyan}角色:${none} ${green}落地机${none}"
-            echo -e "  ${cyan}线路:${none} ${green}${r_pip}${none}"
-            echo -e "  ${cyan}监听:${none} ${green}${r_lport}${none}"
+            if [[ -n "$r_pip" ]]; then
+                echo -e "  ${cyan}线路:${none} ${green}${r_pip}${none}"
+            else
+                echo -e "  ${cyan}线路:${none} ${gray}未限制白名单${none}"
+            fi
+            if [[ "$r_ext" != "$r_lport" ]]; then
+                echo -e "  ${cyan}监听:${none} ${green}${r_lport}${none} (外网: ${green}${r_ext}${none})"
+            else
+                echo -e "  ${cyan}监听:${none} ${green}${r_lport}${none}"
+            fi
             echo
             _section "操作"
             _menu 1 "查看 / 复制中继链接"

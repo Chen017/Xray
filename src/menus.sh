@@ -48,11 +48,26 @@ _get_overview() {
     _ov_sys_ports=$(system_listening_ports)
     _ov_relay_status=""
     if [[ -f $is_relay_state_file ]]; then
-        mapfile -t values < <(jq -r '.role // "", .landing_ip // .peer_ip // "", .landing_port // .listen_port // ""' "$is_relay_state_file")
-        if [[ ${values[0]} == line ]]; then
-            _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${values[1]}:${values[2]}${none}"
-        elif [[ ${values[0]} == landing ]]; then
-            _ov_relay_status="${cyan}[中继]${none} 落地 ← ${green}${values[1]}${none}   端口: ${green}${values[2]}${none}"
+        local role=$(relay_get_role)
+        if [[ $role == line ]]; then
+            local landings_json=$(relay_get_landings)
+            local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
+            if (( count == 1 )); then
+                local lip=$(jq -r '.[0].landing_ip // ""' <<< "$landings_json")
+                local lport=$(jq -r '.[0].landing_port // ""' <<< "$landings_json")
+                local lname=$(jq -r '.[0].name // ""' <<< "$landings_json")
+                _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${lname}(${lip}:${lport})${none}"
+            elif (( count > 1 )); then
+                _ov_relay_status="${cyan}[中继]${none} 线路 → 已绑定 ${green}${count}${none} 台落地机"
+            fi
+        elif [[ $role == landing ]]; then
+            local l_pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file")
+            local l_port=$(jq -r '.listen_port // ""' "$is_relay_state_file")
+            if [[ -n "$l_pip" ]]; then
+                _ov_relay_status="${cyan}[中继]${none} 落地 ← ${green}${l_pip}${none}   端口: ${green}${l_port}${none}"
+            else
+                _ov_relay_status="${cyan}[中继]${none} 落地 (未限制白名单)   端口: ${green}${l_port}${none}"
+            fi
         fi
     fi
 }
@@ -173,6 +188,21 @@ is_main_menu() {
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
             echo -e "  $_ov_relay_status"
+        elif [[ -f "$is_conf_dir/99_relay_in.json" ]]; then
+            local l_port l_ext tuuid
+            l_port=$(jq -r '.inbounds[0].port // ""' "$is_conf_dir/99_relay_in.json" 2>/dev/null)
+            tuuid=$(jq -r '.inbounds[0].settings.clients[0].id // ""' "$is_conf_dir/99_relay_in.json" 2>/dev/null)
+            l_ext=$(jq -r '.external_port // .listen_port // ""' "$is_relay_state_file" 2>/dev/null)
+            [[ -z "$l_ext" ]] && l_ext="$l_port"
+            echo -e "  ${cyan}[模式]${none} ${green}纯落地机模式 (Relay Landing)${none}   ${cyan}出站: ${green}$_ov_outbound_pref${none}   ${cyan}日志: ${green}$_ov_log_level${none}"
+            if [[ "$l_ext" != "$l_port" ]]; then
+                echo -e "  ${cyan}[监听]${none} 端口: ${green}$l_port${none} (公网外网: ${green}$l_ext${none})"
+            else
+                echo -e "  ${cyan}[监听]${none} 端口: ${green}$l_port${none}"
+            fi
+            echo -e "  ${cyan}[UUID]${none} ${green}$tuuid${none}"
+            echo -e "  ${cyan}[状态]${none} 防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
+            echo -e "  $_ov_relay_status"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi
@@ -206,11 +236,21 @@ is_main_menu() {
         [[ "$REPLY" == "0" ]] && return
         case $REPLY in
         1)
+            if [[ ! $_ov_port && -f "$is_conf_dir/99_relay_in.json" ]]; then
+                _info "当前为纯落地机模式，无独立客户端节点配置；如需修改中继配置请进入菜单 4 (线路 / 落地互联)"
+                pause
+                continue
+            fi
             change
             [[ $REPLY == "0" ]] && continue
             pause
             ;;
         2)
+            if [[ ! $_ov_port && -f "$is_conf_dir/99_relay_in.json" ]]; then
+                _info "当前为纯落地机模式，无普通客户端配置；请进入菜单 4 (线路 / 落地互联) 查看中继链接"
+                pause
+                continue
+            fi
             info
             [[ $REPLY == "0" ]] && continue
             pause

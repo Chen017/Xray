@@ -145,6 +145,8 @@ show_help() {
     echo -e "  ${green}-l, --local-install${none}       本地获取安装脚本, 使用当前目录"
     echo -e "  ${green}-p, --proxy${none} <addr>        使用代理下载, e.g., http://127.0.0.1:2333"
     echo -e "  ${green}-v, --core-version${none} <ver>  自定义 $is_core_name 版本, e.g., v1.8.1"
+    echo -e "  ${green}-m, --mode${none} <standard|landing>  安装模式 (标准节点 / 纯落地机)"
+    echo -e "  ${green}--landing${none}                     快捷指定纯落地机模式"
     echo -e "  ${green}-h, --help${none}                显示此帮助界面"
     echo
 
@@ -295,6 +297,22 @@ pass_args() {
             }
             is_core_ver=v${2#v}
             shift 2
+            ;;
+        -m | --mode)
+            case "$2" in
+                1|standard|reality) preset_install_mode=1 ;;
+                2|landing|relay) preset_install_mode=2 ;;
+                *) err "未知安装模式: $2, 支持: standard (标准节点) 或 landing (纯落地机)" ;;
+            esac
+            shift 2
+            ;;
+        --landing)
+            preset_install_mode=2
+            shift 1
+            ;;
+        --standard)
+            preset_install_mode=1
+            shift 1
             ;;
         -h | --help)
             show_help
@@ -463,9 +481,27 @@ main() {
     mkdir -p $is_conf_dir
 
     load core.sh
-    # create a tcp config
-    _step "正在生成节点配置与密钥..."
-    add reality || exit_and_del_tmpdir
+    local install_mode="1"
+    if [[ -n "$preset_install_mode" ]]; then
+        install_mode="$preset_install_mode"
+    else
+        echo
+        _line
+        echo -e "  ${bold}${cyan}请选择安装模式:${none}"
+        echo -e "   ${green}1)${none} 标准节点 (VLESS-REALITY + XHTTP，适合普通 VPS / 线路机)"
+        echo -e "   ${green}2)${none} 纯落地机模式 (仅配置中继互联，无普通节点和XHTTP，适合 NAT / LXC 落地机)"
+        echo
+        prompt_input "请选择 (默认: 1)" install_mode "1"
+    fi
+
+    if [[ "$install_mode" == "2" ]]; then
+        _step "正在配置纯落地机节点..."
+        install_landing_standalone || exit_and_del_tmpdir
+    else
+        # create a tcp config
+        _step "正在生成节点配置与密钥..."
+        add reality || exit_and_del_tmpdir
+    fi
     install_maintenance || err "维护任务安装失败，请进入维护菜单重试"
     printf '%s\n' 1 > "$is_core_dir/.schema-version"
     

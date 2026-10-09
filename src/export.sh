@@ -14,16 +14,30 @@ info() {
     # Check relay role and prompt outbound choice if line VPS
     local active_uuid=$uuid
     local outbound_mode="direct"
+    local selected_landing_name=""
     local role=$(relay_get_role)
     if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
-        local r_landing_ip=$(jq -r '.landing_ip // empty' "$is_relay_state_file" 2>/dev/null)
-        local r_client_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file" 2>/dev/null)
-        if [[ -n "$r_landing_ip" && -n "$r_client_uuid" ]]; then
+        local landings_json=$(relay_get_landings)
+        local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
+        if (( count > 0 )); then
+            local options="本机直出"
+            local i l_name l_ip
+            for (( i=0; i<count; i++ )); do
+                l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings_json")
+                l_ip=$(jq -r ".[$i].landing_ip // \"\"" <<< "$landings_json")
+                if [[ "$l_name" == "默认落地" ]]; then
+                    options="$options 经落地(${l_ip})"
+                else
+                    options="$options 经落地-${l_name}(${l_ip})"
+                fi
+            done
             echo
-            ask list is_outbound_choice "本机直出 经落地(${r_landing_ip})" "\n  请选择出口:"
+            ask list is_outbound_choice "$options" "\n  请选择出口:"
             [[ $REPLY == "0" ]] && return
-            if [[ $REPLY == 2 ]]; then
-                active_uuid=$r_client_uuid
+            if (( REPLY > 1 )); then
+                local idx=$((REPLY - 2))
+                active_uuid=$(jq -r ".[$idx].client_uuid // empty" <<< "$landings_json")
+                selected_landing_name=$(jq -r ".[$idx].name // \"落地$((idx+1))\"" <<< "$landings_json")
                 outbound_mode="landing"
             fi
         fi
@@ -108,8 +122,10 @@ info() {
         local split_name="${is_config_name} (XHTTP-Split)"
         local split_tag="Premium-Split"
         if [[ "$outbound_mode" == "landing" ]]; then
-            split_name="${is_config_name} (XHTTP-Split-Landing)"
-            split_tag="Premium-Split-Landing"
+            local suffix="Landing"
+            [[ -z "$selected_landing_name" || "$selected_landing_name" == "默认落地" ]] || suffix="Landing-${selected_landing_name}"
+            split_name="${is_config_name} (XHTTP-Split-${suffix})"
+            split_tag="Premium-Split-${suffix}"
         fi
 
         if [[ $is_output_format == "Mihomo配置" ]]; then
@@ -209,8 +225,10 @@ EOF
         local single_name="${is_config_name} (XHTTP-Single)"
         local single_tag="Premium-Single"
         if [[ "$outbound_mode" == "landing" ]]; then
-            single_name="${is_config_name} (XHTTP-Single-Landing)"
-            single_tag="Premium-Single-Landing"
+            local suffix="Landing"
+            [[ -z "$selected_landing_name" || "$selected_landing_name" == "默认落地" ]] || suffix="Landing-${selected_landing_name}"
+            single_name="${is_config_name} (XHTTP-Single-${suffix})"
+            single_tag="Premium-Single-${suffix}"
         fi
 
         if [[ $is_output_format == "Mihomo配置" ]]; then
@@ -278,8 +296,10 @@ EOF
         local vision_name="Vision-Reality"
         local vision_tag="Premium"
         if [[ "$outbound_mode" == "landing" ]]; then
-            vision_name="Vision-Reality-Landing"
-            vision_tag="Premium-Landing"
+            local suffix="Landing"
+            [[ -z "$selected_landing_name" || "$selected_landing_name" == "默认落地" ]] || suffix="Landing-${selected_landing_name}"
+            vision_name="Vision-Reality-${suffix}"
+            vision_tag="Premium-${suffix}"
         fi
 
         if [[ $is_output_format == "Mihomo配置" ]]; then

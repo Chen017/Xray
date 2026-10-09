@@ -3,6 +3,12 @@
 
 firewall_ports_file=${firewall_ports_file:-$is_core_dir/firewall_ports.json}
 
+firewall_tool_available() {
+    local tool="$1"
+    command -v "$tool" >/dev/null || return 1
+    "$tool" -w 2 -S >/dev/null 2>&1
+}
+
 firewall_sync() {
     [[ ${config_staging:-0} == 1 ]] && return 0
     local role="" peer="" relay_port="" ports state='{"open":[],"closed":[]}' tool active next p signature cached=1
@@ -10,9 +16,12 @@ firewall_sync() {
     if [[ -f "$is_relay_state_file" ]]; then
         IFS=$'\t' read -r role peer relay_port < <(jq -r '[.role // "", .peer_ip // "", (.listen_port // 0 | tostring)] | @tsv' "$is_relay_state_file")
     fi
-    if ! command -v iptables >/dev/null; then
-        [[ $role != landing ]] || { _fail "落地中继需要 iptables 来源限制，请安装 iptables 后重试"; return 1; }
-        _info "未安装 iptables，请在系统防火墙中管理节点端口"
+    if ! firewall_tool_available iptables; then
+        if [[ $role == landing ]]; then
+            _info "当前环境不支持或缺少 iptables 权限（如无特权 LXC 容器），跳过落地机防火墙来源限制"
+            return 0
+        fi
+        _info "当前环境不支持或缺少 iptables 权限，跳过防火墙规则配置"
         return 0
     fi
     ports=$(jq -sr --argjson state "$state" '
@@ -21,13 +30,13 @@ firewall_sync() {
     signature=$(printf '%s\n' "$ports" "$state" "$role" "$peer" "$relay_port" | sha256sum | awk '{print $1}')
     if [[ $(cat "$is_core_dir/.firewall-signature" 2>/dev/null) == "$signature" ]]; then
         for tool in iptables ip6tables; do
-            command -v "$tool" >/dev/null || continue
+            firewall_tool_available "$tool" || continue
             "$tool" -w 5 -C INPUT -j XRAY-SCRIPT 2>/dev/null || cached=0
         done
         (( ! cached )) || return 0
     fi
     for tool in iptables ip6tables; do
-        command -v "$tool" >/dev/null || continue
+        firewall_tool_available "$tool" || continue
         "$tool" -w 5 -N XRAY-SCRIPT 2>/dev/null || "$tool" -w 5 -S XRAY-SCRIPT >/dev/null || return 1
         active=$("$tool" -w 5 -S XRAY-SCRIPT | awk '$1=="-A" {print $4; exit}')
         next=XRAY-PORTS-A
@@ -35,9 +44,10 @@ firewall_sync() {
         "$tool" -w 5 -N "$next" 2>/dev/null || "$tool" -w 5 -F "$next" || return 1
         # Guard the private relay port even when the system INPUT policy is ACCEPT.
         if [[ $role == landing && $tool == iptables ]]; then
-            [[ "$peer" =~ ^[0-9.]+$ && "$relay_port" =~ ^[0-9]+$ ]] || return 1
-            "$tool" -w 5 -A "$next" -p tcp -s "$peer/32" --dport "$relay_port" -j ACCEPT || return 1
-            "$tool" -w 5 -A "$next" -p tcp --dport "$relay_port" -j DROP || return 1
+            if [[ -n "$peer" && "$peer" =~ ^[0-9.]+$ && "$relay_port" =~ ^[0-9]+$ ]]; then
+                "$tool" -w 5 -A "$next" -p tcp -s "$peer/32" --dport "$relay_port" -j ACCEPT || return 1
+                "$tool" -w 5 -A "$next" -p tcp --dport "$relay_port" -j DROP || return 1
+            fi
         fi
         while read -r p; do
             [[ -n "$p" ]] || continue
@@ -81,12 +91,12 @@ firewall_set_port() {
 open_port() {
     # Node edits derive their firewall rules from the staged config at commit.
     [[ ${config_staging:-0} == 1 ]] && return 0
-    command -v iptables >/dev/null || { _fail "未安装 iptables"; return 1; }
+    firewall_tool_available iptables || { _fail "当前环境不支持或缺少 iptables 权限"; return 1; }
     config_transaction firewall_set_port open "$1"
 }
 close_port() {
     [[ ${config_staging:-0} == 1 ]] && return 0
-    command -v iptables >/dev/null || { _fail "未安装 iptables"; return 1; }
+    firewall_tool_available iptables || { _fail "当前环境不支持或缺少 iptables 权限"; return 1; }
     config_transaction firewall_set_port close "$1"
 }
 
@@ -96,7 +106,7 @@ relay_close_firewall() { [[ ${config_staging:-0} == 1 ]] || firewall_sync; }
 firewall_remove() {
     local tool chain
     for tool in iptables ip6tables; do
-        command -v "$tool" >/dev/null || continue
+        firewall_tool_available "$tool" || continue
         while "$tool" -w 5 -C INPUT -j XRAY-SCRIPT 2>/dev/null; do
             "$tool" -w 5 -D INPUT -j XRAY-SCRIPT || return 1
         done
