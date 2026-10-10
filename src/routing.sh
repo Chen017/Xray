@@ -37,8 +37,17 @@ rules_apply() {
 
 prompt_rule() {
     local input tag=direct
-    _info "格式: DOMAIN/DOMAIN-SUFFIX/DOMAIN-KEYWORD/IP-CIDR/GEOSITE/GEOIP,值"
-    prompt_input "输入规则，例如 DOMAIN-SUFFIX,kimi.ai（0 返回）" input
+    echo
+    echo -e "  ${cyan}支持的规则格式:${none}"
+    echo -e "    ${green}DOMAIN${none},example.com         精确域名匹配"
+    echo -e "    ${green}DOMAIN-SUFFIX${none},example.com  域名后缀匹配"
+    echo -e "    ${green}DOMAIN-KEYWORD${none},example     域名关键词匹配"
+    echo -e "    ${green}IP-CIDR${none},1.2.3.0/24         IP 段匹配"
+    echo -e "    ${green}GEOSITE${none},category            GeoSite 规则集"
+    echo -e "    ${green}GEOIP${none},code                  GeoIP 规则集"
+    echo
+    echo -ne "  请输入规则 (例: ${green}DOMAIN-SUFFIX,kimi.ai${none}) [${red}0 返回${none}]: "
+    read -r input || return 1
     [[ -n "$input" && $input != 0 ]] || return 1
     [[ "$input" == *,* ]] && parse_rule_input "$input" || { _fail "无法识别规则格式"; return 1; }
     ask list action "直连 IPv4解析 IPv6解析 阻止" "\n  请选择规则动作:"

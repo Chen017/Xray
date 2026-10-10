@@ -61,9 +61,9 @@ prompt_confirm() {
     local default="${2:-y}"
     local reply
     if [[ "$default" == "y" ]]; then
-        echo -ne "  ${blue}?${none} ${prompt_msg} [Y/n]: "
+        echo -ne "  ${prompt_msg} [${green}Y${none}/n]: "
     else
-        echo -ne "  ${blue}?${none} ${prompt_msg} [y/N]: "
+        echo -ne "  ${prompt_msg} [y/${green}N${none}]: "
     fi
     read -r reply || return 1
     reply=${reply:-$default}
@@ -77,9 +77,9 @@ prompt_input() {
     local default_val="$3"
     printf -v "$var_name" '%s' ''
     if [[ -n "$default_val" ]]; then
-        echo -ne "  ${blue}?${none} ${prompt_msg} [${cyan}${default_val}${none}]: "
+        echo -ne "  ${prompt_msg} (默认: ${cyan}${default_val}${none}): "
     else
-        echo -ne "  ${blue}?${none} ${prompt_msg}: "
+        echo -ne "  ${prompt_msg}: "
     fi
     local reply
     read -r reply || return 1

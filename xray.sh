@@ -1,6 +1,6 @@
 #!/bin/bash
 set -o pipefail
 
-is_sh_ver=v2.7.2
+is_sh_ver=v2.7.3
 
 . /usr/local/etc/xray/sh/src/init.sh

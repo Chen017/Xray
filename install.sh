@@ -39,9 +39,9 @@ prompt_confirm() {
     local default="${2:-y}"
     local reply
     if [[ "$default" == "y" ]]; then
-        echo -ne "  ${blue}?${none} ${prompt_msg} [Y/n]: "
+        echo -ne "  ${prompt_msg} [${green}Y${none}/n]: "
     else
-        echo -ne "  ${blue}?${none} ${prompt_msg} [y/N]: "
+        echo -ne "  ${prompt_msg} [y/${green}N${none}]: "
     fi
     read -r reply || return 1
     reply=${reply:-$default}
@@ -54,9 +54,9 @@ prompt_input() {
     local default_val="$3"
     printf -v "$var_name" '%s' ''
     if [[ -n "$default_val" ]]; then
-        echo -ne "  ${blue}?${none} ${prompt_msg} [${cyan}${default_val}${none}]: "
+        echo -ne "  ${prompt_msg} (默认: ${cyan}${default_val}${none}): "
     else
-        echo -ne "  ${blue}?${none} ${prompt_msg}: "
+        echo -ne "  ${prompt_msg}: "
     fi
     local reply
     read -r reply || return 1
@@ -523,10 +523,10 @@ main() {
         echo -e "   ${green}1)${none} 标准节点 (VLESS-REALITY + XHTTP，适合普通 VPS / 线路机)"
         echo -e "   ${green}2)${none} 纯落地机模式 (仅配置中继互联，无普通节点和XHTTP，适合 NAT / LXC 落地机)"
         echo
-        prompt_input "请选择 [1-2] (默认: 1)" install_mode "1"
+        prompt_input "请选择 [1-2]" install_mode "1"
         while [[ "$install_mode" != "1" && "$install_mode" != "2" ]]; do
             _fail "输入有误，请输入 1 或 2"
-            prompt_input "请选择 [1-2] (默认: 1)" install_mode "1"
+            prompt_input "请选择 [1-2]" install_mode "1"
         done
     fi
 
