@@ -123,6 +123,28 @@ check python -c 'import json,os; from pathlib import Path; s=json.loads((Path(os
 check config_transaction relay_apply_remove landing
 check config_transaction relay_apply_line 203.0.113.20 30001 "$transport_uuid" "$vlessenc_encryption" "$("$is_core_bin" uuid)"
 check jq -e '.routing.rules[0].outboundTag=="relay-out"' "$is_config_json"
+check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
+
+# Multi-landing binding tests: add second landing machine
+landing2_tuuid=$("$is_core_bin" uuid)
+landing2_cuuid=$("$is_core_bin" uuid)
+check config_transaction relay_apply_line 203.0.113.30 30002 "$landing2_tuuid" "$vlessenc_encryption" "$landing2_cuuid" "日本落地"
+landings_check=$(relay_get_landings)
+check test "$(jq -r 'length' <<< "$landings_check")" = "2"
+check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
+check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "203.0.113.30")' "$is_config_json"
+check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
+
+# Removal of second landing only
+check config_transaction relay_apply_remove line "2"
+landings_after_rm=$(relay_get_landings)
+check test "$(jq -r 'length' <<< "$landings_after_rm")" = "1"
+check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
+if jq -e '.outbounds[] | select(.tag == "relay-out-2")' "$is_config_json" >/dev/null; then
+    echo 'FAIL: removed landing outbound still present'
+    exit 1
+fi
+
 check config_transaction relay_apply_remove line
 pass 'relay setup/removal preserves routing and firewall ownership with source guard'
 
@@ -140,7 +162,7 @@ menu_output="$scratch/homepage.txt"
 clear() { :; }
 is_core_name=Xray
 is_core_ver=26.3.27
-is_sh_ver=v2.6.7
+is_sh_ver=$(sed -n 's/^is_sh_ver=\(v[0-9][0-9.]*\)$/\1/p' "$repo/xray.sh")
 _ov_ip_blocked="${green}✓${none} "
 _ov_sni_checked=1
 is_main_menu <<< 0 > "$menu_output"
@@ -250,15 +272,16 @@ mkdir -p "$is_sh_dir"
 echo 'is_sh_ver=v2.5.4' > "$is_sh_dir/xray.sh"
 echo 'external patch sentinel' > "$is_sh_dir/ipquality_patch.sh"
 ln -s "$is_sh_dir/xray.sh" "$is_sh_bin"
+target_sh_ver=$(sed -n 's/^is_sh_ver=\(v[0-9][0-9.]*\)$/\1/p' "$repo/xray.sh")
 script_fixture=bad-sh.zip
-if safe_update sh v2.6.7; then echo 'FAIL: invalid script accepted'; exit 1; fi
+if safe_update sh "$target_sh_ver"; then echo 'FAIL: invalid script accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=incomplete-sh.zip
-if safe_update sh v2.6.7; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
+if safe_update sh "$target_sh_ver"; then echo 'FAIL: incomplete script package accepted'; exit 1; fi
 check grep -q v2.5.4 "$is_sh_dir/xray.sh"
 script_fixture=sh.zip
-check safe_update sh v2.6.7
-check grep -q v2.6.7 "$is_sh_dir/xray.sh"
+check safe_update sh "$target_sh_ver"
+check grep -q "$target_sh_ver" "$is_sh_dir/xray.sh"
 check grep -q 'external patch sentinel' "$is_sh_dir/ipquality_patch.sh"
 check grep -q v2.5.4 "$is_core_dir/.previous/sh/xray.sh"
 pass 'script update rejects bad syntax, keeps previous scripts and preserves external patch files'

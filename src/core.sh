@@ -539,8 +539,10 @@ rebuild_main_config() {
             (.outbounds | map(select((.tag != "relay-out") and (.tag | startswith("relay-out-") | not)))) +
             (if $role == "line" and ($landings | length > 0) then
                 [
-                    $landings[] | {
-                        "tag": ("relay-out-" + (.id | tostring)),
+                    ($landings | map(select(.transport_uuid and (.transport_uuid != "") and .landing_ip and .landing_port and ((.landing_port | tonumber? // 0) > 0)))) as $valid |
+                    range(0; $valid | length) as $i |
+                    $valid[$i] | {
+                        "tag": (if $i == 0 then "relay-out" else ("relay-out-" + (.id | tostring)) end),
                         "protocol": "vless",
                         "settings": {
                             "address": .landing_ip,
@@ -566,27 +568,37 @@ rebuild_main_config() {
     [[ -n "$tmp_json" ]] || return 1
 
     # 2. Update routing.rules:
-    # 1. relay users -> relay-out-<id> (if role == line)
+    # 1. relay users -> relay-out (landing 1) or relay-out-<id> (if role == line)
     # 2. custom rules
     # 3. base block rules
     tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" --argjson custom "$rules_json" '
         (if $role == "line" and ($landings | length > 0) then
             [
-                $landings[] as $item | {
+                ($landings | map(select(.transport_uuid and (.transport_uuid != "") and .landing_ip and .landing_port and ((.landing_port | tonumber? // 0) > 0)))) as $valid |
+                range(0; $valid | length) as $i |
+                $valid[$i] as $item | {
                     "type": "field",
                     "user": (
-                        [
-                            ("relay-" + ($item.id | tostring) + "-vision-v4"),
-                            ("relay-" + ($item.id | tostring) + "-vision-v6"),
-                            ("relay-" + ($item.id | tostring) + "-xhttp")
-                        ] +
-                        (if ($item.id == "1" or $item == ($landings[0])) then [
+                        (if ($i == 0 or $item.id == "1") then [
                             "relay-vision-v4",
+                            "relay-1-vision-v4"
+                        ] else [
+                            ("relay-" + ($item.id | tostring) + "-vision-v4")
+                        ] end) +
+                        (if ($i == 0 or $item.id == "1") then [
                             "relay-vision-v6",
-                            "relay-xhttp"
-                        ] else [] end)
+                            "relay-1-vision-v6"
+                        ] else [
+                            ("relay-" + ($item.id | tostring) + "-vision-v6")
+                        ] end) +
+                        (if ($i == 0 or $item.id == "1") then [
+                            "relay-xhttp",
+                            "relay-1-xhttp"
+                        ] else [
+                            ("relay-" + ($item.id | tostring) + "-xhttp")
+                        ] end)
                     ),
-                    "outboundTag": ("relay-out-" + ($item.id | tostring))
+                    "outboundTag": (if $i == 0 then "relay-out" else ("relay-out-" + ($item.id | tostring)) end)
                 }
             ]
         else [] end) as $relay_rules |
@@ -924,53 +936,33 @@ relay_sync_client_identities() {
                     .settings.clients = (
                         (.settings.clients | map(select(.email | startswith("relay-") | not))) +
                         [
-                            $landings[] | {
+                            $landings[] | select(.client_uuid and (.client_uuid != "")) | {
                                 id: .client_uuid,
                                 flow: "xtls-rprx-vision",
-                                email: ("relay-" + (.id | tostring) + "-vision-v4")
+                                email: (if .id == "1" then "relay-vision-v4" else ("relay-" + (.id | tostring) + "-vision-v4") end)
                             }
-                        ] +
-                        (if ($landings | length > 0) then [
-                            {
-                                id: $landings[0].client_uuid,
-                                flow: "xtls-rprx-vision",
-                                email: "relay-vision-v4"
-                            }
-                        ] else [] end)
+                        ]
                     )
                 elif (.tag | startswith("public_") and endswith("_v6")) then
                     .settings.clients = (
                         (.settings.clients | map(select(.email | startswith("relay-") | not))) +
                         [
-                            $landings[] | {
+                            $landings[] | select(.client_uuid and (.client_uuid != "")) | {
                                 id: .client_uuid,
                                 flow: "xtls-rprx-vision",
-                                email: ("relay-" + (.id | tostring) + "-vision-v6")
+                                email: (if .id == "1" then "relay-vision-v6" else ("relay-" + (.id | tostring) + "-vision-v6") end)
                             }
-                        ] +
-                        (if ($landings | length > 0) then [
-                            {
-                                id: $landings[0].client_uuid,
-                                flow: "xtls-rprx-vision",
-                                email: "relay-vision-v6"
-                            }
-                        ] else [] end)
+                        ]
                     )
                 elif (.tag == "local_xhttp_stream_up") then
                     .settings.clients = (
                         (.settings.clients | map(select(.email | startswith("relay-") | not))) +
                         [
-                            $landings[] | {
+                            $landings[] | select(.client_uuid and (.client_uuid != "")) | {
                                 id: .client_uuid,
-                                email: ("relay-" + (.id | tostring) + "-xhttp")
+                                email: (if .id == "1" then "relay-xhttp" else ("relay-" + (.id | tostring) + "-xhttp") end)
                             }
-                        ] +
-                        (if ($landings | length > 0) then [
-                            {
-                                id: $landings[0].client_uuid,
-                                email: "relay-xhttp"
-                            }
-                        ] else [] end)
+                        ]
                     )
                 else . end
             )

@@ -50,34 +50,50 @@
     info <<< $'3\n2\n2' > "$scratch/ipv6-vision.txt" || true
     check grep -q '^vless://.*@\[2001:db8::10\]:' "$scratch/ipv6-vision.txt"
 
-    printf '{"role":"line","landing_ip":"203.0.113.20","client_uuid":"11111111-1111-4111-8111-111111111111"}\n' > "$is_relay_state_file"
+    cat <<'EOF' > "$is_relay_state_file"
+{
+  "version": 1,
+  "role": "line",
+  "landing_ip": "203.0.113.20",
+  "client_uuid": "11111111-1111-4111-8111-111111111111"
+}
+EOF
     _reset_state
     info <<< $'2\n3\n1\n2' > "$scratch/relay-export.txt" || true
     check grep -q '^vless://11111111-1111-4111-8111-111111111111@203.0.113.10:' "$scratch/relay-export.txt"
 
-    # Multi-landing binding tests: add a second landing machine
-    relay_apply_line "203.0.113.30" 30002 "22222222-2222-4222-8222-222222222222" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "33333333-3333-4333-8333-333333333333" "日本落地"
-    landings_check=$(relay_get_landings)
-    check test "$(jq -r 'length' <<< "$landings_check")" = "2"
-    check jq -e '.outbounds[] | select(.tag == "relay-out-1" and .settings.address == "203.0.113.20")' "$is_config_json"
-    check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "203.0.113.30")' "$is_config_json"
-    check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
-
-    # Export selecting second landing
+    # Multi-landing export test: selecting second landing
+    cat <<'EOF' > "$is_relay_state_file"
+{
+  "version": 2,
+  "role": "line",
+  "landings": [
+    {
+      "id": "1",
+      "name": "落地1",
+      "landing_ip": "203.0.113.20",
+      "landing_port": 30001,
+      "transport_uuid": "11111111-1111-4111-8111-111111111111",
+      "encryption": "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "client_uuid": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "2",
+      "name": "日本落地",
+      "landing_ip": "203.0.113.30",
+      "landing_port": 30002,
+      "transport_uuid": "22222222-2222-4222-8222-222222222222",
+      "encryption": "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "client_uuid": "33333333-3333-4333-8333-333333333333"
+    }
+  ]
+}
+EOF
     _reset_state
     info <<< $'3\n3\n1\n2' > "$scratch/relay-export-second.txt" || true
     check grep -q '^vless://33333333-3333-4333-8333-333333333333@203.0.113.10:' "$scratch/relay-export-second.txt"
     check grep -q '#Premium-Landing-日本落地' "$scratch/relay-export-second.txt"
-
-    # Removal of second landing only
-    relay_apply_remove line "2"
-    landings_after_rm=$(relay_get_landings)
-    check test "$(jq -r 'length' <<< "$landings_after_rm")" = "1"
-    check jq -e '.outbounds[] | select(.tag == "relay-out-1")' "$is_config_json"
-    if jq -e '.outbounds[] | select(.tag == "relay-out-2")' "$is_config_json" >/dev/null; then
-        echo 'FAIL: removed landing outbound still present'
-        exit 1
-    fi
+    rm -f "$is_relay_state_file"
 
     # Standalone landing config test without xhttp
     scratch_landing="$scratch/pure_landing"

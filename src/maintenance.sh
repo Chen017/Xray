@@ -138,7 +138,7 @@ apply_schema_migration() {
     local file json
     # Keep the recent upstream relay fixes; do not remove valid REALITY options or reset DNS preferences.
     if [[ $(relay_get_role) == line ]]; then
-        json=$(jq '(.outbounds[]? | select(.tag == "relay-out")) |= (
+        json=$(jq '(.outbounds[]? | select(.tag == "relay-out" or (.tag | startswith("relay-out-")))) |= (
             if .settings.flow == "xtls-rprx-vision-udp443" then .settings.flow = "xtls-rprx-vision" else . end |
             if .settings.vnext then (.settings.vnext[].users[]? | select(.flow == "xtls-rprx-vision-udp443")).flow = "xtls-rprx-vision" else . end |
             del(.streamSettings.sockopt.tcpFastOpen)
