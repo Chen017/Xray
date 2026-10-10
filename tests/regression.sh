@@ -125,14 +125,27 @@ check config_transaction relay_apply_line 203.0.113.20 30001 "$transport_uuid" "
 check jq -e '.routing.rules[0].outboundTag=="relay-out"' "$is_config_json"
 check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
 
-# Multi-landing binding tests: add second landing machine
+# Domain validation and link parsing tests
+check relay_validate_host "203.0.113.20"
+check relay_validate_host "nat.example.com"
+check relay_validate_host "my-vps.duckdns.org"
+if relay_validate_host "invalid host" || relay_validate_host "999.999.999.999" || relay_validate_host "-bad.com"; then
+    echo "FAIL: invalid host incorrectly accepted"
+    exit 1
+fi
+domain_test_link=$(relay_build_link "$transport_uuid" "nat.example.com" 30005 "$vlessenc_encryption")
+check relay_parse_link "$domain_test_link"
+check test "$parsed_landing_ip" = "nat.example.com"
+check test "$parsed_landing_port" = "30005"
+
+# Multi-landing binding tests: add second landing machine with domain name
 landing2_tuuid=$("$is_core_bin" uuid)
 landing2_cuuid=$("$is_core_bin" uuid)
-check config_transaction relay_apply_line 203.0.113.30 30002 "$landing2_tuuid" "$vlessenc_encryption" "$landing2_cuuid" "日本落地"
+check config_transaction relay_apply_line nat-jp.example.com 30002 "$landing2_tuuid" "$vlessenc_encryption" "$landing2_cuuid" "日本落地"
 landings_check=$(relay_get_landings)
 check test "$(jq -r 'length' <<< "$landings_check")" = "2"
 check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
-check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "203.0.113.30")' "$is_config_json"
+check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "nat-jp.example.com")' "$is_config_json"
 check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
 
 # Removal of second landing only

@@ -195,11 +195,12 @@ relay_setup_landing() {
     else
         peer=""
     fi
-    get_ip || return 1
+    get_ip &>/dev/null || true
     landing_ip="$ip"
-    prompt_input "落地机公网 IPv4 地址 (NAT机器请填写公网IP或域名)" landing_ip "$landing_ip"
-    [[ -n "$landing_ip" && "$landing_ip" != "0" ]] || { _fail "落地机公网 IP 不能为空"; return 1; }
-    [[ -z "$peer" || "$landing_ip" != "$peer" ]] || { _fail "落地公网 IP 不能与线路机相同"; return 1; }
+    prompt_input "落地机公网地址 (NAT机器请填写公网IP或域名/DDNS)" landing_ip "$landing_ip"
+    [[ -n "$landing_ip" && "$landing_ip" != "0" ]] || { _fail "落地机公网地址不能为空"; return 1; }
+    relay_validate_host "$landing_ip" || { _fail "无效的公网地址 (必须为合法 IPv4 地址或域名)"; return 1; }
+    [[ -z "$peer" || "$landing_ip" != "$peer" ]] || { _fail "落地公网地址不能与线路机相同"; return 1; }
 
     default_port=$(relay_get_random_port 2>/dev/null) || default_port=30443
     prompt_input "落地机监听端口 [NAT 机器请填写映射端口]" port "$default_port"
@@ -233,7 +234,7 @@ relay_setup_line() {
     echo -e "  ${cyan}请输入在落地机上生成的中继链接 (vless://...):${none}"
     prompt_input "中继链接" input
     [[ $input != 0 ]] || return
-    relay_parse_link "$input" || { _fail "链接需要合法 IPv4、VLESS 加密及 RAW/Vision 参数"; return 1; }
+    relay_parse_link "$input" || { _fail "链接需要合法公网 IP 或域名、VLESS 加密及 RAW/Vision 参数"; return 1; }
 
     local landings=$(relay_get_landings)
     local dup=$(jq -r --arg lip "$parsed_landing_ip" --argjson lport "$parsed_landing_port" \

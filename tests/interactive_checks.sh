@@ -103,11 +103,15 @@ EOF
         is_config_json="$scratch_landing/config.json"
         is_relay_state_file="$scratch_landing/relay.json"
         _create config.json
-        relay_apply_landing "44444444-4444-4444-8444-444444444444" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" 28888 "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "198.51.100.5" "" 38888
+        relay_apply_landing "44444444-4444-4444-8444-444444444444" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" 28888 "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "nat-ddns.example.com" "" 38888
         check test -f "$scratch_landing/conf/99_relay_in.json"
         check test ! -f "$scratch_landing/conf/VLESS-REALITY-*.json"
         check jq -e '.inbounds[0].port == 28888 and .inbounds[0].tag == "relay-in"' "$scratch_landing/conf/99_relay_in.json"
         check test "$(jq -r '.external_port' "$is_relay_state_file")" = "38888"
+        check test "$(jq -r '.landing_ip' "$is_relay_state_file")" = "nat-ddns.example.com"
+        info_out=$(relay_view_info_landing)
+        check grep -q 'nat-ddns.example.com' <<< "$info_out"
+        check grep -q '@nat-ddns.example.com:38888?' <<< "$info_out"
         # Test firewall degradation when iptables tool is unavailable
         iptables() { return 1; }
         check firewall_sync

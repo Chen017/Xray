@@ -661,6 +661,30 @@ relay_validate_vless_encryption() {
     [[ "$enc" =~ ^[a-z0-9]+\.[a-z0-9]+\.(0rtt|[0-9]+s)\.[A-Za-z0-9_-]{40,}$ ]]
 }
 
+relay_validate_domain() {
+    local domain="$1"
+    [[ -z "$domain" || ${#domain} -gt 253 ]] && return 1
+    [[ "$domain" != *.* ]] && return 1
+    [[ "$domain" =~ ^[\.-] || "$domain" =~ [\.-]$ ]] && return 1
+    local label_regex='^[a-zA-Z0-9]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9])?$'
+    local -a labels
+    local IFS='.'
+    read -r -a labels <<< "$domain"
+    local last_label="${labels[-1]}"
+    [[ ! "$last_label" =~ [a-zA-Z] ]] && return 1
+    (( ${#last_label} < 2 || ${#last_label} > 63 )) && return 1
+    local label
+    for label in "${labels[@]}"; do
+        [[ ! "$label" =~ $label_regex ]] && return 1
+    done
+    return 0
+}
+
+relay_validate_host() {
+    local host="$1"
+    relay_validate_ipv4 "$host" || relay_validate_domain "$host"
+}
+
 # ─── relay uri builder & parser ──────────────────────────
 relay_build_link() {
     local t_uuid="$1"
@@ -704,7 +728,7 @@ relay_parse_link() {
     if ! relay_validate_uuid "$t_uuid"; then
         return 1
     fi
-    if ! relay_validate_ipv4 "$l_ip"; then
+    if ! relay_validate_host "$l_ip"; then
         return 1
     fi
     if ! relay_validate_port "$l_port"; then
@@ -1010,7 +1034,7 @@ relay_remove_client_identity() {
 
 _do_single_relay_test() {
     local landing_ip="$1" landing_port="$2" transport_uuid="$3" encryption="$4" landing_name="${5:-落地机}"
-    relay_validate_ipv4 "$landing_ip" && relay_validate_port "$landing_port" &&
+    relay_validate_host "$landing_ip" && relay_validate_port "$landing_port" &&
         relay_validate_uuid "$transport_uuid" && relay_validate_vless_encryption "$encryption" || {
         _fail "[$landing_name] 中继状态参数无效，请检查绑定配置"
         return 1
@@ -1110,7 +1134,11 @@ EOF
     if [[ "$exit_ip" == "$landing_ip" ]]; then
         _ok "[$landing_name] 完整链路测试成功！数据成功经由落地机转发并直出 Internet (出口 IP: $exit_ip)"
     elif [[ -n "$exit_ip" ]]; then
-        warn "[$landing_name] 链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
+        if relay_validate_domain "$landing_ip"; then
+            _ok "[$landing_name] 完整链路测试成功！数据成功经由落地机 ($landing_ip) 转发并直出 Internet (出口 IP: $exit_ip)"
+        else
+            warn "[$landing_name] 链路测试成功但出口 IP ($exit_ip) 与登记落地 IP ($landing_ip) 不一致，可能是多 IP VPS 或 NAT 出口"
+        fi
     else
         _fail "[$landing_name] 完整链路测试失败：无法通过落地机代理访问外部网络，请检查 transport UUID 或 encryption 是否匹配"
         return 1
@@ -1191,7 +1219,7 @@ _show_single_landing_info() {
 
     _kv "备注名称:" "$lname"
     _kv "角色:" "线路机 (line)"
-    _kv "落地 IP:" "$lip"
+    _kv "落地地址:" "$lip"
     _kv "落地端口:" "$lport"
     _kv "中继传输 UUID:" "$tuuid"
     _kv "专属客户端 UUID:" "$cuuid"
@@ -1259,6 +1287,7 @@ relay_view_info_landing() {
     else
         _kv "放行线路 IP:" "未限制 (无防火墙限制或未指定)"
     fi
+    _kv "落地地址:" "$landing_pub_ip"
     _kv "监听端口:" "$lport"
     [[ "$ext_port" == "$lport" ]] || _kv "外网端口:" "$ext_port"
     _kv "中继传输 UUID:" "$tuuid"
@@ -1267,7 +1296,7 @@ relay_view_info_landing() {
     _kv "线路加密参数:" "$enc"
     echo
 
-    if ! relay_validate_ipv4 "$landing_pub_ip"; then
+    if ! relay_validate_host "$landing_pub_ip"; then
         get_ip
         if relay_validate_ipv4 "$ip"; then
             landing_pub_ip="$ip"
@@ -1282,7 +1311,7 @@ relay_view_info_landing() {
     fi
 
     if [[ -z "$landing_pub_ip" ]]; then
-        _fail "未能获取到落地机公网 IPv4 地址，无法生成中继链接。"
+        _fail "未能获取到落地机公网地址，无法生成中继链接。"
         echo
         return 1
     fi
