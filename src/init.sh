@@ -167,6 +167,14 @@ load status.sh
 load export.sh
 load menus.sh
 
+case "${1:-}" in
+    --update|update)
+        load download.sh
+        safe_update sh
+        exit $?
+        ;;
+esac
+
 is_core_ver=$("$is_core_bin" version | awk 'NR==1 {print $2}')
 install_maintenance || warn "维护任务安装失败，请在更新与维护菜单重试"
 migrate_installation || warn "配置迁移未完成，原配置已保留；请查看诊断结果后重试"
