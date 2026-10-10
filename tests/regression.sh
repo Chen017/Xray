@@ -311,6 +311,26 @@ pass 'script update rejects bad syntax, keeps previous scripts and preserves ext
 ) || exit 1
 pass 'bootstrap pins the core release and rejects an incorrect checksum'
 
+(
+    . <(sed -n '/^pass_args() {/,/^# exit and remove tmpdir/p' "$repo/install.sh")
+    preset_install_mode=""
+    pass_args -m landing
+    check test "$preset_install_mode" = "2"
+    pass_args --landing
+    check test "$preset_install_mode" = "2"
+    pass_args -m standard
+    check test "$preset_install_mode" = "1"
+    pass_args --standard
+    check test "$preset_install_mode" = "1"
+
+    test_mode=""
+    prompt_input "请选择" test_mode "1" <<< ""
+    check test "$test_mode" = "1"
+    prompt_input "请选择" test_mode "1" <<< "2"
+    check test "$test_mode" = "2"
+) || exit 1
+pass 'install mode CLI flags and interactive prompt resolve correctly'
+
 # Stopped service and unsupported-core behavior must not be changed by settings.
 systemctl stop xray
 check config_transaction set_outbound_strategy UseIPv4

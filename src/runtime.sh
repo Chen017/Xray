@@ -1,6 +1,39 @@
 #!/bin/bash
 # Shared configuration operations. Callers generate files only in the staged tree.
 
+# ─── Standard Prompts & UI Helpers ────────────────────────
+prompt_confirm() {
+    local prompt_msg="$1"
+    local default="${2:-y}"
+    local reply
+    if [[ "$default" == "y" ]]; then
+        echo -ne "  ${blue}?${none} ${prompt_msg} [Y/n]: "
+    else
+        echo -ne "  ${blue}?${none} ${prompt_msg} [y/N]: "
+    fi
+    read -r reply || return 1
+    reply=${reply:-$default}
+    [[ "${reply,,}" == "y" || "${reply,,}" == "yes" ]]
+}
+
+prompt_input() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    local default_val="$3"
+    printf -v "$var_name" '%s' ''
+    if [[ -n "$default_val" ]]; then
+        echo -ne "  ${blue}?${none} ${prompt_msg} [${cyan}${default_val}${none}]: "
+    else
+        echo -ne "  ${blue}?${none} ${prompt_msg}: "
+    fi
+    local reply
+    read -r reply || return 1
+    printf -v "$var_name" '%s' "${reply:-$default_val}"
+}
+
+_section() { echo -e "${cyan} ── $* ──${none}"; }
+_menu() { printf "  ${green}%2s.${none} %s\n" "$1" "$2"; }
+
 service_active() { systemctl is-active --quiet "$is_core"; }
 
 manage() {
