@@ -156,7 +156,8 @@ check jq -e '.routing.balancers[0].tag == "relay-balancer-2" and .routing.balanc
 check jq -e '.routing.balancers[1].tag == "relay-balancer-1" and .routing.balancers[1].fallbackTag == "direct"' "$is_config_json"
 check jq -e '.outbounds[] | select(.tag == "loop-relay-1" and .protocol == "loopback")' "$is_config_json"
 check jq -e '.routing.rules[] | select(.inboundTag == ["from-loop-relay-1"] and .balancerTag == "relay-balancer-1")' "$is_config_json"
-check jq -e '.routing.rules[] | select((.user | index("relay-vision-v4")) and .balancerTag == "relay-balancer-2")' "$is_config_json"
+check jq -e '.routing.rules[] | select((.user | index("relay-vision-v4")) and .balancerTag == "relay-balancer-1")' "$is_config_json"
+check jq -e '.routing.rules[] | select((.user | index("relay-2-vision-v4")) and .balancerTag == "relay-balancer-2")' "$is_config_json"
 check "$is_core_bin" run -test -config "$is_config_json"
 
 # Failover toggle off: restores standard non-balancer outbounds and routing

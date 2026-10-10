@@ -680,11 +680,7 @@ rebuild_main_config() {
                                 ),
                                 "balancerTag": (
                                     if ($failover.enabled == true) then
-                                        (if ($i == 0 or $item.id == "1") then
-                                            ("relay-balancer-" + ($final_order[0] | tostring))
-                                        else
-                                            ("relay-balancer-" + ($item.id | tostring))
-                                        end)
+                                        ("relay-balancer-" + ($item.id | tostring))
                                     else null
                                     end
                                 )
