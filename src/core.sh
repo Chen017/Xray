@@ -1213,7 +1213,9 @@ EOF
     sleep 2
 
     local exit_ip=""
-    exit_ip=$(curl -s --socks5 "127.0.0.1:$test_socks_port" --max-time 6 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+    exit_ip=$(curl -4 -s --socks5-hostname "127.0.0.1:$test_socks_port" --max-time 6 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+    [[ -n "$exit_ip" ]] || exit_ip=$(curl -4 -s --socks5 "127.0.0.1:$test_socks_port" --max-time 6 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -E '^ip=' | cut -d= -f2)
+    [[ -n "$exit_ip" ]] || exit_ip=$(curl -4 -s --socks5-hostname "127.0.0.1:$test_socks_port" --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '\r\n[:space:]')
 
     kill $test_pid &>/dev/null
     wait "$test_pid" 2>/dev/null || true
