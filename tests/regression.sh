@@ -148,6 +148,24 @@ check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == 
 check jq -e '.outbounds[] | select(.tag == "relay-out-2" and .settings.address == "nat-jp.example.com")' "$is_config_json"
 check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
 
+# Failover tests with 2 landings: enabled, custom interval 30s, priority 2 -> 1 -> direct
+check config_transaction relay_apply_failover "true" "30s" '["2", "1"]'
+check jq -e '.observatory.probeInterval == "30s"' "$is_config_json"
+check jq -e '.routing.balancers | length == 2' "$is_config_json"
+check jq -e '.routing.balancers[0].tag == "relay-balancer-2" and .routing.balancers[0].fallbackTag == "loop-relay-1"' "$is_config_json"
+check jq -e '.routing.balancers[1].tag == "relay-balancer-1" and .routing.balancers[1].fallbackTag == "direct"' "$is_config_json"
+check jq -e '.outbounds[] | select(.tag == "loop-relay-1" and .protocol == "loopback")' "$is_config_json"
+check jq -e '.routing.rules[] | select(.inboundTag == ["from-loop-relay-1"] and .balancerTag == "relay-balancer-1")' "$is_config_json"
+check jq -e '.routing.rules[] | select((.user | index("relay-vision-v4")) and .balancerTag == "relay-balancer-2")' "$is_config_json"
+check "$is_core_bin" run -test -config "$is_config_json"
+
+# Failover toggle off: restores standard non-balancer outbounds and routing
+check config_transaction relay_apply_failover "false" "60s" '["1", "2"]'
+check test "$(jq -r '.observatory // empty' "$is_config_json")" = ""
+check test "$(jq -r '.routing.balancers // empty' "$is_config_json")" = ""
+check jq -e '.routing.rules[] | select(.outboundTag == "relay-out-2" and (.user | index("relay-2-vision-v4")))' "$is_config_json"
+check "$is_core_bin" run -test -config "$is_config_json"
+
 # Removal of second landing only
 check config_transaction relay_apply_remove line "2"
 landings_after_rm=$(relay_get_landings)
@@ -157,6 +175,14 @@ if jq -e '.outbounds[] | select(.tag == "relay-out-2")' "$is_config_json" >/dev/
     echo 'FAIL: removed landing outbound still present'
     exit 1
 fi
+
+# Failover test with single landing: balancer with fallbackTag: direct
+check config_transaction relay_apply_failover "true" "15s" '["1"]'
+check jq -e '.observatory.probeInterval == "15s"' "$is_config_json"
+check jq -e '.routing.balancers | length == 1' "$is_config_json"
+check jq -e '.routing.balancers[0].tag == "relay-balancer-1" and .routing.balancers[0].fallbackTag == "direct"' "$is_config_json"
+check jq -e '.routing.rules[] | select((.user | index("relay-vision-v4")) and .balancerTag == "relay-balancer-1")' "$is_config_json"
+check "$is_core_bin" run -test -config "$is_config_json"
 
 check config_transaction relay_apply_remove line
 pass 'relay setup/removal preserves routing and firewall ownership with source guard'

@@ -405,6 +405,11 @@ relay_get_landings() {
     ' "$is_relay_state_file" 2>/dev/null || echo '[]'
 }
 
+relay_get_failover() {
+    [[ -f "$is_relay_state_file" ]] || { echo '{"enabled":false,"interval":"60s","order":[]}'; return 0; }
+    jq -c '.failover // {"enabled":false,"interval":"60s","order":[]}' "$is_relay_state_file" 2>/dev/null || echo '{"enabled":false,"interval":"60s","order":[]}'
+}
+
 relay_save_state() {
     atomic_json "$is_relay_state_file" "$1"
 }
@@ -513,16 +518,16 @@ rule_to_display() {
 # rebuild main config outbounds and routing rules idempotently
 rebuild_main_config() {
     [[ ! -f $is_config_json ]] && return 1
-    local rules_json=$(load_custom_rules)
-    local role=$(relay_get_role)
-    local landings_json='[]'
+    local rules_json role landings_json='[]' failover_json='{"enabled":false,"interval":"60s","order":[]}'
+    rules_json=$(load_custom_rules) || rules_json='[]'
+    role=$(relay_get_role)
     if [[ "$role" == "line" && -f $is_relay_state_file ]]; then
         landings_json=$(relay_get_landings)
+        failover_json=$(relay_get_failover)
     fi
 
-    # 1. Update outbounds:
-    # Ensure: direct (0), direct-v4, direct-v6, block, and if line: relay-out-<id> for each landing
-    local tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" '
+    local tmp_json
+    tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" --argjson custom "$rules_json" --argjson failover "$failover_json" '
         (if (.outbounds | length == 0) or (.outbounds[0].tag != "direct") then
             .outbounds = ([((.outbounds[]? | select(.tag == "direct")) // {"protocol":"freedom","tag":"direct","settings":{"domainStrategy":"UseIPv4v6"}})] + (.outbounds | map(select(.tag != "direct"))))
         else . end) |
@@ -535,81 +540,168 @@ rebuild_main_config() {
         (if (.outbounds | map(select(.tag == "block")) | length) == 0 then
             .outbounds += [{"protocol": "blackhole", "tag": "block"}]
         else . end) |
+        (.outbounds | map(select((.tag != "relay-out") and (.tag | startswith("relay-out-") | not) and (.tag | startswith("loop-relay-") | not)))) as $base_outbounds |
+        ($landings | map(select(.transport_uuid and (.transport_uuid != "") and .landing_ip and .landing_port and ((.landing_port | tonumber? // 0) > 0)))) as $valid |
+        ($valid | map(.id)) as $all_ids |
+        (($failover.order // []) | map(select(. as $o | $all_ids | index($o)))) as $pref_order |
+        ($pref_order + ($all_ids - $pref_order)) as $final_order |
         (
-            (.outbounds | map(select((.tag != "relay-out") and (.tag | startswith("relay-out-") | not)))) +
-            (if $role == "line" and ($landings | length > 0) then
-                [
-                    ($landings | map(select(.transport_uuid and (.transport_uuid != "") and .landing_ip and .landing_port and ((.landing_port | tonumber? // 0) > 0)))) as $valid |
-                    range(0; $valid | length) as $i |
-                    $valid[$i] | {
-                        "tag": (if $i == 0 then "relay-out" else ("relay-out-" + (.id | tostring)) end),
-                        "protocol": "vless",
-                        "settings": {
-                            "address": .landing_ip,
-                            "port": (.landing_port | tonumber),
-                            "id": .transport_uuid,
-                            "encryption": .encryption,
-                            "flow": "xtls-rprx-vision"
-                        },
-                        "streamSettings": {
-                            "network": "raw",
-                            "security": "none"
-                        },
-                        "mux": {
-                            "enabled": false
-                        },
-                        "targetStrategy": "AsIs"
+            if $role == "line" and ($valid | length > 0) then
+                (
+                    [
+                        range(0; $valid | length) as $i |
+                        $valid[$i] as $item |
+                        (if $i == 0 then [{
+                            "tag": "relay-out",
+                            "protocol": "vless",
+                            "settings": {
+                                "address": $item.landing_ip,
+                                "port": ($item.landing_port | tonumber),
+                                "id": $item.transport_uuid,
+                                "encryption": $item.encryption,
+                                "flow": "xtls-rprx-vision"
+                            },
+                            "streamSettings": {"network": "raw", "security": "none"},
+                            "mux": {"enabled": false},
+                            "targetStrategy": "AsIs"
+                        }] else [] end) +
+                        [{
+                            "tag": ("relay-out-" + ($item.id | tostring)),
+                            "protocol": "vless",
+                            "settings": {
+                                "address": $item.landing_ip,
+                                "port": ($item.landing_port | tonumber),
+                                "id": $item.transport_uuid,
+                                "encryption": $item.encryption,
+                                "flow": "xtls-rprx-vision"
+                            },
+                            "streamSettings": {"network": "raw", "security": "none"},
+                            "mux": {"enabled": false},
+                            "targetStrategy": "AsIs"
+                        }]
+                    ] | add
+                ) as $landing_outs |
+                (
+                    if ($failover.enabled == true) and ($final_order | length > 1) then
+                        [
+                            range(0; ($final_order | length - 1)) as $k |
+                            $final_order[$k + 1] as $next_id |
+                            {
+                                "tag": ("loop-relay-" + ($next_id | tostring)),
+                                "protocol": "loopback",
+                                "settings": {
+                                    "inboundTag": ("from-loop-relay-" + ($next_id | tostring))
+                                }
+                            }
+                        ]
+                    else [] end
+                ) as $loop_outs |
+                ($base_outbounds + $landing_outs + $loop_outs)
+            else
+                $base_outbounds
+            end
+        ) as $new_outbounds |
+        .outbounds = $new_outbounds |
+        (
+            if ($role == "line") and ($valid | length > 0) and ($failover.enabled == true) then
+                .observatory = {
+                    "subjectSelector": ["relay-out"],
+                    "probeUrl": "http://cp.cloudflare.com/generate_204",
+                    "probeInterval": ($failover.interval // "60s"),
+                    "enableConcurrency": true
+                }
+            else
+                del(.observatory)
+            end
+        ) |
+        (
+            if ($role == "line") and ($valid | length > 0) and ($failover.enabled == true) then
+                .routing.balancers = [
+                    range(0; $final_order | length) as $k |
+                    $final_order[$k] as $cur_id |
+                    ($k == ($final_order | length - 1)) as $is_last |
+                    {
+                        "tag": ("relay-balancer-" + ($cur_id | tostring)),
+                        "selector": [("relay-out-" + ($cur_id | tostring))],
+                        "strategy": {"type": "leastPing"},
+                        "fallbackTag": (if $is_last then "direct" else ("loop-relay-" + ($final_order[$k + 1] | tostring)) end)
                     }
                 ]
-            else [] end)
-        ) as $new_outbounds |
-        .outbounds = $new_outbounds
-    ' "$is_config_json") || return 1
-    [[ -n "$tmp_json" ]] || return 1
-
-    # 2. Update routing.rules:
-    # 1. relay users -> relay-out (landing 1) or relay-out-<id> (if role == line)
-    # 2. custom rules
-    # 3. base block rules
-    tmp_json=$(jq --arg role "$role" --argjson landings "$landings_json" --argjson custom "$rules_json" '
-        (if $role == "line" and ($landings | length > 0) then
+            else
+                del(.routing.balancers)
+            end
+        ) |
+        (
+            (
+                if ($role == "line") and ($valid | length > 0) then
+                    (
+                        if ($failover.enabled == true) and ($final_order | length > 1) then
+                            [
+                                range(1; $final_order | length) as $k |
+                                $final_order[$k] as $cur_id |
+                                {
+                                    "type": "field",
+                                    "inboundTag": [("from-loop-relay-" + ($cur_id | tostring))],
+                                    "balancerTag": ("relay-balancer-" + ($cur_id | tostring))
+                                }
+                            ]
+                        else [] end
+                    ) +
+                    (
+                        [
+                            range(0; $valid | length) as $i |
+                            $valid[$i] as $item |
+                            {
+                                "type": "field",
+                                "user": (
+                                    (if ($i == 0 or $item.id == "1") then [
+                                        "relay-vision-v4",
+                                        "relay-1-vision-v4"
+                                    ] else [
+                                        ("relay-" + ($item.id | tostring) + "-vision-v4")
+                                    ] end) +
+                                    (if ($i == 0 or $item.id == "1") then [
+                                        "relay-vision-v6",
+                                        "relay-1-vision-v6"
+                                    ] else [
+                                        ("relay-" + ($item.id | tostring) + "-vision-v6")
+                                    ] end) +
+                                    (if ($i == 0 or $item.id == "1") then [
+                                        "relay-xhttp",
+                                        "relay-1-xhttp"
+                                    ] else [
+                                        ("relay-" + ($item.id | tostring) + "-xhttp")
+                                    ] end)
+                                ),
+                                "outboundTag": (
+                                    if ($failover.enabled == true) then null
+                                    else (if $i == 0 then "relay-out" else ("relay-out-" + ($item.id | tostring)) end)
+                                    end
+                                ),
+                                "balancerTag": (
+                                    if ($failover.enabled == true) then
+                                        (if ($i == 0 or $item.id == "1") then
+                                            ("relay-balancer-" + ($final_order[0] | tostring))
+                                        else
+                                            ("relay-balancer-" + ($item.id | tostring))
+                                        end)
+                                    else null
+                                    end
+                                )
+                            } | del(.outboundTag | nulls) | del(.balancerTag | nulls)
+                        ]
+                    )
+                else [] end
+            ) as $relay_rules |
+            (if ($custom | type) == "array" then $custom else [] end) as $c_rules |
             [
-                ($landings | map(select(.transport_uuid and (.transport_uuid != "") and .landing_ip and .landing_port and ((.landing_port | tonumber? // 0) > 0)))) as $valid |
-                range(0; $valid | length) as $i |
-                $valid[$i] as $item | {
-                    "type": "field",
-                    "user": (
-                        (if ($i == 0 or $item.id == "1") then [
-                            "relay-vision-v4",
-                            "relay-1-vision-v4"
-                        ] else [
-                            ("relay-" + ($item.id | tostring) + "-vision-v4")
-                        ] end) +
-                        (if ($i == 0 or $item.id == "1") then [
-                            "relay-vision-v6",
-                            "relay-1-vision-v6"
-                        ] else [
-                            ("relay-" + ($item.id | tostring) + "-vision-v6")
-                        ] end) +
-                        (if ($i == 0 or $item.id == "1") then [
-                            "relay-xhttp",
-                            "relay-1-xhttp"
-                        ] else [
-                            ("relay-" + ($item.id | tostring) + "-xhttp")
-                        ] end)
-                    ),
-                    "outboundTag": (if $i == 0 then "relay-out" else ("relay-out-" + ($item.id | tostring)) end)
-                }
-            ]
-        else [] end) as $relay_rules |
-        (if ($custom | type) == "array" then $custom else [] end) as $c_rules |
-        [
-            {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},
-            {"type": "field", "ip": ["geoip:cn", "geoip:private"], "outboundTag": "block"},
-            {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
-        ] as $base_blocks |
-        .routing.rules = ($relay_rules + $c_rules + $base_blocks)
-    ' <<< "$tmp_json")
+                {"type": "field", "domain": ["geosite:cn"], "outboundTag": "block"},
+                {"type": "field", "ip": ["geoip:cn", "geoip:private"], "outboundTag": "block"},
+                {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"}
+            ] as $base_blocks |
+            .routing.rules = ($relay_rules + $c_rules + $base_blocks)
+        )
+    ' "$is_config_json")
     if [[ $? -eq 0 && -n "$tmp_json" ]]; then
         atomic_json "$is_config_json" "$tmp_json" || return 1
     else
@@ -1323,6 +1415,206 @@ relay_view_info_landing() {
     echo
 }
 
+relay_menu_failover() {
+    while :; do
+        clear
+        echo
+        _line
+        echo -e "  ${bold}${cyan}落地机故障转移与回退设置${none}"
+        _line
+
+        local fo=$(relay_get_failover)
+        local enabled=$(jq -r '.enabled // false' <<< "$fo")
+        local interval=$(jq -r '.interval // "60s"' <<< "$fo")
+        local pref_order_json=$(jq -c '.order // []' <<< "$fo")
+        local landings=$(relay_get_landings)
+        local count=$(jq -r 'length' <<< "$landings" 2>/dev/null || echo 0)
+
+        local status_str
+        if [[ "$enabled" == "true" ]]; then
+            status_str="${green}已开启${none}"
+        else
+            status_str="${gray}已关闭${none}"
+        fi
+
+        echo -e "  ${cyan}故障转移状态:${none} $status_str"
+        echo -e "  ${cyan}探测周期 / 容忍时间:${none} ${green}$interval${none}"
+
+        local all_ids final_order
+        all_ids=$(jq -c '[.[] | .id]' <<< "$landings")
+        final_order=$(jq -c --argjson all "$all_ids" --argjson pref "$pref_order_json" '
+            ($pref | map(select(. as $o | $all | index($o)))) as $valid_pref |
+            ($valid_pref + ($all - $valid_pref))
+        ' <<< '{}')
+
+        local order_count=$(jq -r 'length' <<< "$final_order")
+        local order_display=""
+        local k oid oname
+        for (( k=0; k<order_count; k++ )); do
+            oid=$(jq -r ".[$k]" <<< "$final_order")
+            oname=$(jq -r --arg id "$oid" '.[] | select(.id == $id) | .name // ("落地" + $id)' <<< "$landings")
+            if [[ -z "$order_display" ]]; then
+                order_display="[${cyan}${oname}${none}]"
+            else
+                order_display="${order_display} → [${cyan}${oname}${none}]"
+            fi
+        done
+        if [[ -n "$order_display" ]]; then
+            order_display="${order_display} → [${yellow}线路直连 direct${none}]"
+        else
+            order_display="${gray}未绑定落地机${none}"
+        fi
+        echo -e "  ${cyan}故障转移链:${none} $order_display"
+        echo
+        _section "操作"
+        if [[ "$enabled" == "true" ]]; then
+            _menu 1 "关闭故障转移与回退"
+        else
+            _menu 1 "开启故障转移与回退"
+        fi
+        _menu 2 "设置探测周期 / 离线容忍时间"
+        _menu 3 "调整落地机故障转移优先级顺序"
+        echo
+        echo -ne "  请选择 [${green}1-3${none}] [${red}0 返回${none}]: "
+        read -r REPLY || return
+        [[ "$REPLY" == "0" ]] && return
+
+        case "$REPLY" in
+        1)
+            local new_enabled
+            if [[ "$enabled" == "true" ]]; then
+                new_enabled="false"
+            else
+                new_enabled="true"
+            fi
+            if config_transaction relay_apply_failover "$new_enabled" "$interval" "$final_order"; then
+                if [[ "$new_enabled" == "true" ]]; then
+                    _ok "已开启落地机故障转移与回退"
+                else
+                    _ok "已关闭故障转移，恢复标准中继模式"
+                fi
+            fi
+            pause
+            ;;
+        2)
+            echo
+            _section "设置探测周期 (容忍离线时间)"
+            _info "当探测目标在设定周期内无法连通时，判定该落地机离线并自动切换到下一个节点。"
+            echo
+            _menu 1 "15 秒 (高敏感，快速切换)"
+            _menu 2 "30 秒 (推荐)"
+            _menu 3 "60 秒 (默认，稳定)"
+            _menu 4 "120 秒 (宽容)"
+            _menu 5 "自定义秒数"
+            echo
+            echo -ne "  请选择 [${green}1-5${none}] [${red}0 取消${none}]: "
+            read -r c_int || continue
+            [[ "$c_int" == "0" ]] && continue
+            local new_interval=""
+            case "$c_int" in
+            1) new_interval="15s" ;;
+            2) new_interval="30s" ;;
+            3) new_interval="60s" ;;
+            4) new_interval="120s" ;;
+            5)
+                local custom_sec
+                prompt_input "请输入探测秒数 (5 - 600)" custom_sec "60"
+                if [[ "$custom_sec" =~ ^[0-9]+$ ]] && (( custom_sec >= 5 && custom_sec <= 600 )); then
+                    new_interval="${custom_sec}s"
+                else
+                    _fail "无效的秒数，必须在 5 - 600 之间"
+                    pause
+                    continue
+                fi
+                ;;
+            *)
+                _fail "无效的选项"
+                pause
+                continue
+                ;;
+            esac
+            if [[ -n "$new_interval" ]]; then
+                if config_transaction relay_apply_failover "$enabled" "$new_interval" "$final_order"; then
+                    _ok "探测周期已更新为: $new_interval"
+                fi
+                pause
+            fi
+            ;;
+        3)
+            echo
+            _section "调整落地机故障转移顺序"
+            if (( count < 2 )); then
+                _info "当前仅有 $count 台落地机，无需调整顺序 (故障时自动回退至线路直连)。"
+                pause
+                continue
+            fi
+            echo -e "  当前已绑定的落地机:"
+            local idx l_id l_name l_ip l_port
+            for (( idx=0; idx<count; idx++ )); do
+                l_id=$(jq -r ".[$idx].id" <<< "$landings")
+                l_name=$(jq -r ".[$idx].name // \"落地$((idx+1))\"" <<< "$landings")
+                l_ip=$(jq -r ".[$idx].landing_ip" <<< "$landings")
+                l_port=$(jq -r ".[$idx].landing_port" <<< "$landings")
+                echo -e "  ${green}$((idx+1)))${none} [ID:${l_id}] ${cyan}${l_name}${none} (${l_ip}:${l_port})"
+            done
+            echo
+            _info "当前优先级顺序: $order_display"
+            echo -e "  ${cyan}请输入期望的优先级顺序，用空格分隔序号 (例如: 2 1):${none}"
+            local input_order
+            prompt_input "输入新顺序 (0 取消)" input_order ""
+            [[ "$input_order" == "0" || -z "$input_order" ]] && continue
+
+            input_order=${input_order//,/ }
+            local -a selected_ids=()
+            local num sel_id
+            local valid_input=1
+            for num in $input_order; do
+                if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= count )); then
+                    sel_id=$(jq -r ".[$((num-1))].id" <<< "$landings")
+                    local already=0 existing_id
+                    for existing_id in "${selected_ids[@]}"; do
+                        if [[ "$existing_id" == "$sel_id" ]]; then
+                            already=1; break
+                        fi
+                    done
+                    if [[ $already -eq 0 ]]; then
+                        selected_ids+=("$sel_id")
+                    fi
+                else
+                    valid_input=0
+                    break
+                fi
+            done
+            if [[ $valid_input -eq 0 || ${#selected_ids[@]} -eq 0 ]]; then
+                _fail "输入的顺序序号无效"
+                pause
+                continue
+            fi
+            local rem_id
+            for (( idx=0; idx<count; idx++ )); do
+                rem_id=$(jq -r ".[$idx].id" <<< "$landings")
+                local found=0
+                for existing_id in "${selected_ids[@]}"; do
+                    if [[ "$existing_id" == "$rem_id" ]]; then
+                        found=1; break
+                    fi
+                done
+                if [[ $found -eq 0 ]]; then
+                    selected_ids+=("$rem_id")
+                fi
+            done
+
+            local new_order_json
+            new_order_json=$(printf '%s\n' "${selected_ids[@]}" | jq -R . | jq -s .)
+            if config_transaction relay_apply_failover "$enabled" "$interval" "$new_order_json"; then
+                _ok "故障转移顺序更新成功"
+            fi
+            pause
+            ;;
+        esac
+    done
+}
+
 relay_menu() {
     while :; do
         clear
@@ -1355,7 +1647,14 @@ relay_menu() {
         elif [[ "$role" == "line" ]]; then
             local landings_json=$(relay_get_landings)
             local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
-            echo -e "  ${cyan}角色:${none} ${green}线路机${none} (已绑定 ${green}${count}${none} 台落地机)"
+            local fo_json=$(relay_get_failover)
+            local fo_en=$(jq -r '.enabled // false' <<< "$fo_json")
+            local fo_int=$(jq -r '.interval // "60s"' <<< "$fo_json")
+            local fo_tag="${gray}[故障转移: 关]${none}"
+            if [[ "$fo_en" == "true" ]]; then
+                fo_tag="${green}[故障转移: 开(${fo_int})]${none}"
+            fi
+            echo -e "  ${cyan}角色:${none} ${green}线路机${none} (已绑定 ${green}${count}${none} 台落地机) $fo_tag"
             local i l_name l_ip l_port
             for (( i=0; i<count; i++ )); do
                 l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings_json")
@@ -1369,8 +1668,9 @@ relay_menu() {
             _menu 2 "查看落地信息"
             _menu 3 "测试落地连通性"
             _menu 4 "解除落地绑定"
+            _menu 5 "落地故障转移与回退设置"
             echo
-            echo -ne "  请选择 [${green}1-4${none}] [${red}0 返回主菜单${none}]: "
+            echo -ne "  请选择 [${green}1-5${none}] [${red}0 返回主菜单${none}]: "
             read -r REPLY || return 1
             [[ "$REPLY" == "0" ]] && return
             case $REPLY in
@@ -1389,6 +1689,9 @@ relay_menu() {
             4)
                 relay_remove_line
                 pause
+                ;;
+            5)
+                relay_menu_failover
                 ;;
             esac
         elif [[ "$role" == "landing" ]]; then

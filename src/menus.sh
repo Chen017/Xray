@@ -52,13 +52,19 @@ _get_overview() {
         if [[ $role == line ]]; then
             local landings_json=$(relay_get_landings)
             local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
+            local fo_info=""
+            local fo_enabled=$(jq -r '.failover.enabled // false' "$is_relay_state_file" 2>/dev/null)
+            if [[ "$fo_enabled" == "true" ]]; then
+                local fo_int=$(jq -r '.failover.interval // "60s"' "$is_relay_state_file" 2>/dev/null)
+                fo_info=" ${green}[故障转移:${fo_int}]${none}"
+            fi
             if (( count == 1 )); then
                 local lip=$(jq -r '.[0].landing_ip // ""' <<< "$landings_json")
                 local lport=$(jq -r '.[0].landing_port // ""' <<< "$landings_json")
                 local lname=$(jq -r '.[0].name // ""' <<< "$landings_json")
-                _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${lname}(${lip}:${lport})${none}"
+                _ov_relay_status="${cyan}[中继]${none} 线路 → ${green}${lname}(${lip}:${lport})${none}${fo_info}"
             elif (( count > 1 )); then
-                _ov_relay_status="${cyan}[中继]${none} 线路 → 已绑定 ${green}${count}${none} 台落地机"
+                _ov_relay_status="${cyan}[中继]${none} 线路 → 已绑定 ${green}${count}${none} 台落地机${fo_info}"
             fi
         elif [[ $role == landing ]]; then
             local l_pip=$(jq -r '.peer_ip // ""' "$is_relay_state_file")

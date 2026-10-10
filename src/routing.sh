@@ -122,8 +122,10 @@ relay_apply_landing() {
 relay_apply_line() {
     local lip="$1" port="$2" tuuid="$3" enc="$4" cuuid="$5" name="$6"
     local landings='[]'
+    local existing_failover='{"enabled":false,"interval":"60s","order":[]}'
     if [[ -f "$is_relay_state_file" ]]; then
         landings=$(relay_get_landings)
+        existing_failover=$(relay_get_failover)
     fi
 
     local count next_id
@@ -143,9 +145,18 @@ relay_apply_line() {
     local new_landings
     new_landings=$(jq --argjson item "$new_landing" '. + [$item]' <<< "$landings") || return 1
 
+    local updated_failover
+    updated_failover=$(jq --arg nid "$next_id" '
+        if .order and (.order | length > 0) then
+            .order = ((.order + [$nid]) | unique)
+        else
+            .
+        end
+    ' <<< "$existing_failover") || updated_failover="$existing_failover"
+
     local state
-    state=$(jq -n --argjson landings "$new_landings" \
-        '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid}') || return 1
+    state=$(jq -n --argjson landings "$new_landings" --argjson fo "$updated_failover" \
+        '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid, failover:$fo}') || return 1
 
     relay_save_state "$state" && relay_sync_client_identities && rebuild_main_config
 }
@@ -158,6 +169,7 @@ relay_apply_remove() {
                 return 0
             fi
             local landings=$(relay_get_landings)
+            local existing_failover=$(relay_get_failover)
             local remaining='[]'
             if [[ "$target_id" != "all" && -n "$target_id" ]]; then
                 remaining=$(jq --arg id "$target_id" '[.[] | select(.id != $id)]' <<< "$landings")
@@ -166,9 +178,15 @@ relay_apply_remove() {
             if (( count == 0 )); then
                 relay_delete_state && relay_remove_client_identity && rebuild_main_config
             else
+                local updated_failover
+                updated_failover=$(jq --argjson remaining "$remaining" '
+                    ($remaining | map(.id)) as $rem_ids |
+                    .order = (.order // [] | map(select(. as $o | $rem_ids | index($o))))
+                ' <<< "$existing_failover") || updated_failover="$existing_failover"
+
                 local state
-                state=$(jq -n --argjson landings "$remaining" \
-                    '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid}') || return 1
+                state=$(jq -n --argjson landings "$remaining" --argjson fo "$updated_failover" \
+                    '{version:2, role:"line", landings:$landings, landing_ip:$landings[0].landing_ip, landing_port:$landings[0].landing_port, transport_uuid:$landings[0].transport_uuid, encryption:$landings[0].encryption, client_uuid:$landings[0].client_uuid, failover:$fo}') || return 1
                 relay_save_state "$state" && relay_sync_client_identities && rebuild_main_config
             fi
             ;;
@@ -177,6 +195,41 @@ relay_apply_remove() {
             ;;
         *) return 1 ;;
     esac
+}
+
+relay_apply_failover() {
+    local enabled="$1" interval="$2" order_json="${3:-[]}"
+    if [[ ! -f "$is_relay_state_file" ]]; then
+        _fail "未找到中继状态文件"
+        return 1
+    fi
+    local role
+    role=$(relay_get_role)
+    if [[ "$role" != "line" ]]; then
+        _fail "仅线路机支持配置故障转移"
+        return 1
+    fi
+
+    [[ "$enabled" == "true" || "$enabled" == "false" ]] || enabled="false"
+    [[ -n "$interval" ]] || interval="60s"
+    [[ "$interval" =~ ^[0-9]+s?$ ]] || interval="60s"
+    [[ "$interval" == *s ]] || interval="${interval}s"
+    if ! echo "$order_json" | jq -e 'type == "array"' &>/dev/null; then
+        order_json='[]'
+    fi
+
+    local current_state
+    current_state=$(cat "$is_relay_state_file")
+    local new_state
+    new_state=$(jq --arg enabled "$enabled" --arg interval "$interval" --argjson order "$order_json" '
+        .failover = {
+            "enabled": ($enabled == "true"),
+            "interval": $interval,
+            "order": $order
+        }
+    ' <<< "$current_state") || return 1
+
+    relay_save_state "$new_state" && rebuild_main_config
 }
 
 relay_setup_landing() {
