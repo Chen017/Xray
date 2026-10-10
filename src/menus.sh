@@ -193,7 +193,7 @@ is_main_menu() {
             echo -e "  ${cyan}[ v6 ]${none} SNI: $_ov_v6_sni_status$_ov_v6_cdn_status${green}$_ov_v6_sni${none}   SIDs: ${green}$_ov_v6_sids${none}"
             echo -e "  ${cyan}[高级]${none} 路径: ${green}$_ov_path${none}   公钥: ${green}$short_pbk${none}"
             echo -e "  ${cyan}[状态]${none} GFW放行: $_ov_ip_blocked   防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
-            echo -e "  $_ov_relay_status"
+            [[ -z $_ov_relay_status ]] || echo -e "  $_ov_relay_status"
         elif [[ -f "$is_conf_dir/99_relay_in.json" ]]; then
             local l_port l_ext tuuid
             l_port=$(jq -r '.inbounds[0].port // ""' "$is_conf_dir/99_relay_in.json" 2>/dev/null)
@@ -208,7 +208,7 @@ is_main_menu() {
             fi
             echo -e "  ${cyan}[UUID]${none} ${green}$tuuid${none}"
             echo -e "  ${cyan}[状态]${none} 防火墙: ${green}$_ov_fw_ports${none}   占用: ${green}$_ov_sys_ports${none}"
-            echo -e "  $_ov_relay_status"
+            [[ -z $_ov_relay_status ]] || echo -e "  $_ov_relay_status"
         else
             echo -e "  ${gray}暂无配置${none}"
         fi

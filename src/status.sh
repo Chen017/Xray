@@ -32,16 +32,14 @@ filter_rule_summary() {
 }
 
 system_firewall_summary() {
-    local tool rules summary ports="" policies="" checked=0 failed=0 family complex=0
+    local tool rules summary ports="" checked=0
     for tool in iptables ip6tables; do
         command -v "$tool" >/dev/null || continue
-        family=v4; [[ $tool != ip6tables ]] || family=v6
         if rules=$("$tool" -w 2 -S 2>/dev/null); then
             checked=1
             summary=$(filter_rule_summary <<< "$rules")
             ports+=$(awk '$1=="PORT" {print $2}' <<< "$summary")$'\n'
-            [[ $summary != *'POLICY ACCEPT'* ]] || policies+="$family 默认放行；"
-        else failed=1; fi
+        fi
     done
     if command -v nft >/dev/null; then
         if rules=$(nft -j list ruleset 2>/dev/null) &&
@@ -49,10 +47,8 @@ system_firewall_summary() {
             if [[ $summary == *CHECKED* ]]; then
                 checked=1
                 ports+=$(awk '$1=="PORT" {print $2}' <<< "$summary")$'\n'
-                [[ $summary != *COMPLEX* ]] || complex=1
-                [[ $summary != *'POLICY '* ]] || policies+='nft 有默认放行链；'
             fi
-        else failed=1; fi
+        fi
     fi
     if (( ! checked )); then
         if command -v nft >/dev/null; then echo 'nftables（需查看规则）'
@@ -60,10 +56,7 @@ system_firewall_summary() {
         return
     fi
     ports=$(printf '%s' "$ports" | sed '/^$/d' | sort -u | sort -n | paste -sd ',' -)
-    printf '%s%s' "$policies" "${ports:-无显式端口}"
-    (( ! failed )) || printf '（部分规则读取失败）'
-    (( ! complex )) || printf '（含未展开规则）'
-    printf '\n'
+    printf '%s\n' "${ports:-无}"
 }
 
 system_listening_ports() {
