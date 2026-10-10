@@ -24,6 +24,8 @@ jobs:
           find . -name '*.sh' -not -path './.test-tools/*' -print0 | xargs -0 -n1 bash -n
           find . -name '*.sh' -not -path './.test-tools/*' -print0 | xargs -0 shellcheck -S error
       - name: Fetch official runtimes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tests/fetch_tools.py
       - name: Isolated regression against pinned and current Xray
         run: |
