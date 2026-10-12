@@ -605,7 +605,7 @@ rebuild_main_config() {
         (
             if ($role == "line") and ($valid | length > 0) and ($failover.enabled == true) then
                 .observatory = {
-                    "subjectSelector": ["relay-out"],
+                    "subjectSelector": ((["relay-out"] + ($valid | map("relay-out-" + (.id | tostring)))) | unique),
                     "probeUrl": "http://cp.cloudflare.com/generate_204",
                     "probeInterval": ($failover.interval // "60s"),
                     "enableConcurrency": true
@@ -654,25 +654,20 @@ rebuild_main_config() {
                             {
                                 "type": "field",
                                 "user": (
-                                    (if ($i == 0 or $item.id == "1") then [
+                                    [
+                                        ("relay-" + ($item.id | tostring) + "-vision-v4"),
+                                        ("relay-" + ($item.id | tostring) + "-vision-v6"),
+                                        ("relay-" + ($item.id | tostring) + "-xhttp")
+                                    ] +
+                                    (if ($item.id == "1" or $i == 0) then [
                                         "relay-vision-v4",
-                                        "relay-1-vision-v4"
-                                    ] else [
-                                        ("relay-" + ($item.id | tostring) + "-vision-v4")
-                                    ] end) +
-                                    (if ($i == 0 or $item.id == "1") then [
+                                        "relay-1-vision-v4",
                                         "relay-vision-v6",
-                                        "relay-1-vision-v6"
-                                    ] else [
-                                        ("relay-" + ($item.id | tostring) + "-vision-v6")
-                                    ] end) +
-                                    (if ($i == 0 or $item.id == "1") then [
+                                        "relay-1-vision-v6",
                                         "relay-xhttp",
                                         "relay-1-xhttp"
-                                    ] else [
-                                        ("relay-" + ($item.id | tostring) + "-xhttp")
-                                    ] end)
-                                ),
+                                    ] else [] end)
+                                ) | unique,
                                 "outboundTag": (
                                     if ($failover.enabled == true) then null
                                     else (if $i == 0 then "relay-out" else ("relay-out-" + ($item.id | tostring)) end)

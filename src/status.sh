@@ -60,13 +60,16 @@ system_firewall_summary() {
 }
 
 system_listening_ports() {
-    local output
+    local output ep_min=32768 ep_max=60999
+    if [[ -r /proc/sys/net/ipv4/ip_local_port_range ]]; then
+        read -r ep_min ep_max < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || { ep_min=32768; ep_max=60999; }
+    fi
     if command -v ss >/dev/null; then
         output=$(ss -H -lntu 2>/dev/null) || { echo '读取失败'; return; }
-        output=$(awk '$1 ~ /^(tcp|udp)/ {n=split($5,a,":"); if (a[n] ~ /^[0-9]+$/) print a[n]}' <<< "$output")
+        output=$(awk -v min="$ep_min" -v max="$ep_max" '$1 ~ /^(tcp|udp)/ {n=split($5,a,":"); p=a[n]; if (p ~ /^[0-9]+$/) { if ($1 ~ /^udp/ && p >= min && p <= max) next; print p }}' <<< "$output")
     elif command -v netstat >/dev/null; then
         output=$(netstat -lntu 2>/dev/null) || { echo '读取失败'; return; }
-        output=$(awk '$1 ~ /^(tcp|udp)/ {n=split($4,a,":"); if (a[n] ~ /^[0-9]+$/) print a[n]}' <<< "$output")
+        output=$(awk -v min="$ep_min" -v max="$ep_max" '$1 ~ /^(tcp|udp)/ {n=split($4,a,":"); p=a[n]; if (p ~ /^[0-9]+$/) { if ($1 ~ /^udp/ && p >= min && p <= max) next; print p }}' <<< "$output")
     else echo '缺少 ss/netstat'; return; fi
     output=$(printf '%s' "$output" | sed '/^$/d' | sort -nu | paste -sd ',' -)
     printf '%s\n' "${output:-无}"

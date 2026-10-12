@@ -179,10 +179,22 @@ fi
 
 # Failover test with single landing: balancer with fallbackTag: direct
 check config_transaction relay_apply_failover "true" "15s" '["1"]'
-check jq -e '.observatory.probeInterval == "15s"' "$is_config_json"
+check jq -e '.observatory.probeInterval == "15s" and .observatory.probeUrl == "http://cp.cloudflare.com/generate_204"' "$is_config_json"
+check jq -e '(.observatory.subjectSelector | index("relay-out")) and (.observatory.subjectSelector | index("relay-out-1"))' "$is_config_json"
 check jq -e '.routing.balancers | length == 1' "$is_config_json"
 check jq -e '.routing.balancers[0].tag == "relay-balancer-1" and .routing.balancers[0].fallbackTag == "direct"' "$is_config_json"
 check jq -e '.routing.rules[] | select((.user | index("relay-vision-v4")) and .balancerTag == "relay-balancer-1")' "$is_config_json"
+check "$is_core_bin" run -test -config "$is_config_json"
+
+# Re-add landing 2, then remove landing 1 to verify surviving landing 2 routing & observatory
+check config_transaction relay_apply_line nat-jp.example.com 30002 "$landing2_tuuid" "$vlessenc_encryption" "$landing2_cuuid" "日本落地"
+check config_transaction relay_apply_remove line "1"
+check config_transaction relay_apply_failover "true" "20s" '["2"]'
+check jq -e '.observatory.probeInterval == "20s" and .observatory.probeUrl == "http://cp.cloudflare.com/generate_204"' "$is_config_json"
+check jq -e '(.observatory.subjectSelector | index("relay-out-2"))' "$is_config_json"
+check jq -e '.routing.balancers | length == 1' "$is_config_json"
+check jq -e '.routing.balancers[0].tag == "relay-balancer-2" and .routing.balancers[0].fallbackTag == "direct"' "$is_config_json"
+check jq -e '.routing.rules[] | select((.user | index("relay-2-vision-v4")) and (.user | index("relay-2-xhttp")) and .balancerTag == "relay-balancer-2")' "$is_config_json"
 check "$is_core_bin" run -test -config "$is_config_json"
 
 check config_transaction relay_apply_remove line
