@@ -1724,8 +1724,63 @@ relay_menu() {
     done
 }
 
+# change landing server config
+change_landing() {
+    local _cur_out_strategy rules_count
+    while :; do
+        clear
+        echo
+        _line
+        echo -e "  ${bold}${cyan}落地机配置更改${none}  ${gray}|${none}  ${is_core_status}"
+        _line
+        echo -e "  ${cyan}[模式]${none} ${green}纯落地机模式 (Relay Landing)${none}"
+        _cur_out_strategy=$(outbound_strategy)
+        echo -e "  ${cyan}[出站 IP 优先]${none} ${green}$(outbound_label "$_cur_out_strategy")${none}"
+        rules_count=0
+        if [[ -f "$is_custom_rules_file" ]]; then
+            rules_count=$(jq -er 'if type == "array" then length else 0 end' "$is_custom_rules_file" 2>/dev/null || echo 0)
+        fi
+        echo -e "  ${cyan}[自定义分流规则]${none} ${green}${rules_count}${none} 条"
+        echo
+        _section "请选择更改项目"
+        _menu 1 "管理自定义分流规则"
+        _menu 2 "切换出站 IP 优先 (当前: $(outbound_label "$_cur_out_strategy"))"
+        echo
+        echo -ne "  请选择 [${green}1-2${none}] [${red}0 返回${none}]: "
+        read -r REPLY || return 1
+        [[ "$REPLY" == "0" || -z "$REPLY" ]] && { REPLY=0; return 0; }
+        case $REPLY in
+        1)
+            manage_custom_rules
+            ;;
+        2)
+            choose_outbound_strategy
+            [[ $REPLY != 0 ]] && pause
+            ;;
+        *)
+            _fail "输入有误，请重试"
+            pause
+            ;;
+        esac
+    done
+}
+
 # change config file
 change() {
+    local _has_nodes
+    _has_nodes=$(list_managed_node_configs)
+    if [[ -z "$_has_nodes" && -f "$is_conf_dir/99_relay_in.json" ]]; then
+        if [[ -n "$is_change_id" ]]; then
+            case "$is_change_id" in
+            9) manage_custom_rules; return $? ;;
+            10) choose_outbound_strategy; return $? ;;
+            *) _fail "纯落地机模式仅支持管理分流规则或切换出站策略"; return 1 ;;
+            esac
+        fi
+        change_landing "$@"
+        return $?
+    fi
+
     is_change=1
     is_dont_show_info=1
     {

@@ -99,11 +99,16 @@ EOF
     scratch_landing="$scratch/pure_landing"
     mkdir -p "$scratch_landing/conf"
     (
+        is_core_dir="$scratch_landing"
+        is_custom_rules_file="$scratch_landing/custom_rules.json"
+        mkdir -p "$scratch_landing/bin"
+        cp "$scratch/install/bin/"* "$scratch_landing/bin/" 2>/dev/null || true
         is_conf_dir="$scratch_landing/conf"
         is_config_json="$scratch_landing/config.json"
         is_relay_state_file="$scratch_landing/relay.json"
         _create config.json
-        relay_apply_landing "44444444-4444-4444-8444-444444444444" "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" 28888 "chacha20poly1305.x25519.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" "nat-ddns.example.com" "" 38888
+        check relay_generate_vlessenc
+        relay_apply_landing "44444444-4444-4444-8444-444444444444" "$vlessenc_decryption" 28888 "$vlessenc_encryption" "nat-ddns.example.com" "" 38888
         check test -f "$scratch_landing/conf/99_relay_in.json"
         check test ! -f "$scratch_landing/conf/VLESS-REALITY-*.json"
         check jq -e '.inbounds[0].port == 28888 and .inbounds[0].tag == "relay-in"' "$scratch_landing/conf/99_relay_in.json"
@@ -115,6 +120,34 @@ EOF
         # Test firewall degradation when iptables tool is unavailable
         iptables() { return 1; }
         check firewall_sync
+
+        # Test change menu and options for pure landing server
+        clear() { :; }
+        # 1. Main menu option 1 routes to landing config menu without blocking
+        landing_menu_out="$scratch_landing/main-menu-change.txt"
+        _reset_state
+        is_main_menu <<< $'1\n0\n0\n' > "$landing_menu_out" || true
+        check grep -q '落地机配置更改' "$landing_menu_out"
+        check grep -q '管理自定义分流规则' "$landing_menu_out"
+        check grep -q '切换出站 IP 优先' "$landing_menu_out"
+        if grep -q '无独立客户端节点配置' "$landing_menu_out"; then
+            echo 'FAIL: landing change menu was blocked in main menu'
+            exit 1
+        fi
+
+        # 2. Change outbound strategy in landing mode
+        change <<< $'2\n1\n\n0\n' > "$scratch_landing/change-strategy.txt" || true
+        check test "$(jq -r '.outbounds[] | select(.tag == "direct") | .settings.domainStrategy' "$is_config_json")" = "UseIPv4"
+
+        # 3. Manage custom rules in landing mode
+        change <<< $'1\n1\nDOMAIN-SUFFIX,netflix.com\n1\n0\n0\n' > "$scratch_landing/change-rules.txt" || true
+        check jq -e '.[0].domain[0] == "domain:netflix.com"' "$is_custom_rules_file"
+        check jq -e '.routing.rules[] | select(.domain[0]? == "domain:netflix.com" and .outboundTag == "direct")' "$is_config_json"
+
+        # 4. Quick execution via is_change_id in landing mode
+        is_change_id=10 change <<< $'2\n' >/dev/null || true
+        check test "$(jq -r '.outbounds[] | select(.tag == "direct") | .settings.domainStrategy' "$is_config_json")" = "UseIPv6"
+        unset is_change_id
     )
 ) || exit 1
 pass 'restored exports cover all three modes, both formats, reverse split, IPv6, multi-landing and pure landing'

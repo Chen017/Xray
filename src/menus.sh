@@ -242,11 +242,6 @@ is_main_menu() {
         [[ "$REPLY" == "0" ]] && return
         case $REPLY in
         1)
-            if [[ ! $_ov_port && -f "$is_conf_dir/99_relay_in.json" ]]; then
-                _info "当前为纯落地机模式，无独立客户端节点配置；如需修改中继配置请进入菜单 4 (线路 / 落地互联)"
-                pause
-                continue
-            fi
             change
             [[ $REPLY == "0" ]] && continue
             pause
