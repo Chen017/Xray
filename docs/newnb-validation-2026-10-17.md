@@ -120,13 +120,13 @@ python tests/mihomo_ab.py --controller LOCAL_CONTROLLER --state-dir .test-tools/
 
 ## 状态
 
-各轮测试结束均恢复原 XHTTP 配置、香港主节点、美国 AI 和 Antigravity 分流；Self-Host 订阅文件内容保持原样。服务端现有配置、XMUX、伪装参数和内核未改变。测试收尾时变更只在 `codex/beta` 本地分支；随后按用户要求推送了该分支，未部署服务器脚本。
+各轮测速结束均恢复原 XHTTP 配置、香港主节点、美国 AI 和 Antigravity 分流；Self-Host 订阅文件内容保持原样。测速阶段服务端配置、XMUX、伪装参数和内核未改变。该阶段收尾时变更只在本地 Beta，随后按用户要求推送；后续独立的监听修复与部署见下文。
 
 用户返回后的 IPA Single 验收已完成，结果见上文。日常浏览体验未取得长期验证；日常核心仍保留官方版。用户随后明确授权个人 Fork 与上游 PR，交付如下：
 
-- [Xray Beta](https://github.com/Chen017/Xray/tree/codex/beta) 已推送，云端回归通过；main 未修改，服务器脚本未部署。
+- [Xray Beta](https://github.com/Chen017/Xray/tree/codex/beta) 已推送，云端回归通过；main 未修改。随后对旁支追加的延迟问题完成独立排查，已在 NewNB 更新 Beta 并事务修正监听；其他服务器未改。[详细记录](xhttp-delay-investigation-2026-10-17.md)。
 - [官方 Mihomo PR #3331](https://github.com/MetaCubeX/mihomo/pull/3331)：新增可选 `h2-max-receive-buffer-per-stream` 字节数，默认 0 沿用库默认；支持下载层继承与覆盖。尚不代表已获上游接受。
 - [个人 Fork](https://github.com/Chen017/mihomo) 的默认分支 `codex/window-builds` 维护相同补丁和定时构建。[使用与替换说明](https://github.com/Chen017/mihomo/blob/codex/window-builds/WINDOW-CORE.md)，[自动构建](https://github.com/Chen017/mihomo/actions/workflows/window-release.yml)。本地项目位于同级独立目录 `mihomo-window`。
 - 个人构建显式启用时，分离节点可只在已有 `download-settings` 中设置 8388608（8 MiB）。Xray 脚本默认导出不添加该字段，继续兼容官方核心。
 
-个人构建未自动安装到用户电脑。无需更改服务器 Xray 26.3.27、XMUX 或伪装参数。
+个人构建未自动安装到用户电脑。服务器核心仍为 Xray 26.3.27，XMUX 与全部伪装参数保留；监听地址族修复与客户端窗口提速独立。个人 Fork 另修复了 unified-delay 有效首轮测量的回退问题。

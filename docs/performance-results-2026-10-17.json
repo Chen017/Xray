@@ -271,7 +271,6 @@
     "Small repeated experiment, not broad statistical validation"
   ],
   "daily_parameters_changed": false,
-  "pushed_or_deployed": false,
   "manual_ipa_single_acceptance": {
     "date": "2026-10-17",
     "endpoint": "IPA CyberLab 400G Tokyo",
@@ -346,5 +345,14 @@
     "temporary_clients_stopped": true,
     "server_sampler_stopped": true,
     "production_restarted_by_test": false
+  },
+  "pushed_or_deployed_at_measurement_time": false,
+  "subsequent_delivery": {
+    "xray_beta_pushed": true,
+    "newnb_listener_fix_applied": true,
+    "mihomo_window_pr": 3331,
+    "personal_fork_release": "v1.19.32-window.88dcbf7f.f457672f",
+    "daily_client_replaced": false,
+    "delay_results": "delay-results-2026-10-17.json"
   }
 }
