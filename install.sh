@@ -115,7 +115,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip openssl iptables util-linux logrotate ca-certificates"
+is_pkg="wget curl unzip openssl iptables util-linux logrotate ca-certificates ip"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
     tmpcore
@@ -189,8 +189,15 @@ show_help() {
 # install dependent pkg
 install_pkg() {
     cmd_not_found=
+    local package_name
     for i in $*; do
-        [[ ! $(type -P $i) ]] && cmd_not_found="$cmd_not_found,$i"
+        if [[ ! $(type -P $i) ]]; then
+            package_name=$i
+            if [[ $i == ip ]]; then
+                if [[ $cmd =~ yum ]]; then package_name=iproute; else package_name=iproute2; fi
+            fi
+            cmd_not_found="$cmd_not_found,$package_name"
+        fi
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')

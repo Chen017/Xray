@@ -55,6 +55,7 @@ check() { if ! "$@"; then printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
 pass() { printf 'PASS: %s\n' "$*"; }
 check test "$("$is_core_bin" version | awk 'NR==1 {print $2}')" = 26.3.27
 pass 'real regression runtime is the fixed Xray 26.3.27'
+. "$repo/tests/listener_checks.sh"
 get_ip() { ip=203.0.113.10; }
 get_ipv6() { ipv6=2001:db8::10; }
 get_port() { tmp_port=443; }
@@ -75,6 +76,20 @@ validate_config
 touch "$TEST_STATE/active"
 firewall_sync
 pass 'generated dual-stack REALITY/Vision/XHTTP server is accepted by the real core'
+check jq -e 'any(.inbounds[]; .tag=="public_443_v4" and .listen=="203.0.113.10") and any(.inbounds[]; .tag=="public_443_v6" and .streamSettings.sockopt.v6only==true)' "$is_conf_dir/VLESS-REALITY-443.json"
+if [[ $(uname -s) == Linux ]]; then
+    check python "$repo/tests/check_listener_families.py" "$is_core_bin" "$is_conf_dir/VLESS-REALITY-443.json"
+fi
+
+node_file="$is_conf_dir/VLESS-REALITY-443.json"
+protected=$(jq -c '.inbounds | map(del(.listen, .streamSettings.sockopt.v6only))' "$node_file")
+legacy=$(jq '(.inbounds[] | select(.tag=="public_443_v4")).listen="0.0.0.0" | (.inbounds[] | select(.tag=="public_443_v6")).streamSettings.sockopt |= del(.v6only)' "$node_file")
+printf '%s\n' "$legacy" > "$node_file"
+printf '%s\n' 1 > "$is_core_dir/.schema-version"
+check migrate_installation
+check test "$protected" = "$(jq -c '.inbounds | map(del(.listen, .streamSettings.sockopt.v6only))' "$node_file")"
+check jq -e 'any(.inbounds[]; .tag=="public_443_v4" and .listen=="203.0.113.10") and any(.inbounds[]; .tag=="public_443_v6" and .streamSettings.sockopt.v6only==true)' "$node_file"
+pass 'listener migration separates families and preserves all REALITY, XMUX and performance fields'
 
 original=$(configuration_content "$is_core_dir")
 check config_transaction set_outbound_strategy UseIPv6

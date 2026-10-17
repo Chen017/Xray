@@ -7,13 +7,13 @@ def clients($email; $relay_email; $vision):
 def reality($family; $sni; $sid):
     {
         tag:("public_" + ($port|tostring) + "_" + $family),
-        listen:(if $family == "v4" then "0.0.0.0" else "::" end), port:$port, protocol:"vless",
+        listen:(if $family == "v4" then $listen4 else "::" end), port:$port, protocol:"vless",
         settings:{clients:clients("vision-"+$family; "relay-vision-"+$family; true),
                   decryption:"none", fallbacks:[{dest:"@xhttp_inner"}]},
         streamSettings:{network:"raw", security:"reality",
             realitySettings:{show:false, dest:($sni+":443"), serverNames:[$sni],
                 privateKey:$private_key, publicKey:$public_key, shortIds:$sid, maxTimeDiff:60000},
-            sockopt:{tcpFastOpen:true}},
+            sockopt:({tcpFastOpen:true} + (if $family == "v6" then {v6only:true} else {} end))},
         sniffing:{enabled:true, destOverride:["http","tls","quic"], routeOnly:true}
     };
 {inbounds:[reality("v4";$sni4;$sid4), reality("v6";$sni6;$sid6), {

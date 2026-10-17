@@ -67,6 +67,20 @@ get_ipv6() {
     fi
 }
 
+# Go's "tcp" wildcard listeners can both become dual-stack SO_REUSEPORT sockets.
+# Bind the v4 entry to a concrete local address so the two REALITY SNIs cannot mix.
+node_ipv4_listen_address() {
+    local candidate
+    command -v ip >/dev/null || { _fail "无法确定 IPv4 监听地址：需要 ip 命令"; return 1; }
+    candidate=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") {print $(i+1); exit}}')
+    if relay_validate_ipv4 "$candidate"; then printf '%s\n' "$candidate"; return 0; fi
+    while IFS= read -r candidate; do
+        if relay_validate_ipv4 "$candidate"; then printf '%s\n' "$candidate"; return 0; fi
+    done < <(ip -o -4 address show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')
+    # An IPv6-only host still needs a non-overlapping, local-only v4 entry.
+    printf '%s\n' 127.0.0.1
+}
+
 get_port() {
     tmp_port=443
     if [[ $(is_test port_used 443) ]]; then
@@ -257,11 +271,12 @@ _create() {
             _fail "SNI 必须是有效域名，请检查 IPv4/IPv6 目标域名"
             return 1
         }
-        local relay_uuid=""
+        local relay_uuid="" listen4
+        listen4=$(node_ipv4_listen_address) || return 1
         if [[ $(relay_get_role) == line ]]; then
             relay_uuid=$(jq -r '.client_uuid // empty' "$is_relay_state_file") || return 1
         fi
-        is_new_json=$(jq -n --argjson port "$port" --arg uuid "$uuid" \
+        is_new_json=$(jq -n --argjson port "$port" --arg uuid "$uuid" --arg listen4 "$listen4" \
             --arg private_key "$is_private_key" --arg public_key "$is_public_key" \
             --arg sni4 "$v4_sni" --arg sni6 "$v6_sni" \
             --arg path "${v4_path:-/api/v3/updates}" --arg relay_uuid "$relay_uuid" \
