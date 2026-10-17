@@ -17,6 +17,8 @@ Official Mihomo and Xray clients were tested through the same localhost direct S
 
 In alternating runs, the unchanged 4 MiB build reached 405/418 Mbps and the 16 MiB build 674/828 Mbps. REALITY, TLS fingerprints, padding, paths, and both XMUX pools were unchanged. An 8 MiB build also improved sustained throughput. These were bounded HTTPS downloads from an authenticated temporary origin on the same server; no claim is made that they are identical to public Speedtest results.
 
+Subsequent user-operated Single tests against IPA CyberLab 400G Tokyo recorded final downloads of 456.35 Mbps with the official baseline, 722 Mbps with an isolated 8 MiB diagnostic client, and 777 Mbps with an isolated 16 MiB client. The latter reported loaded download latency of 140 ms versus 74 ms for the baseline; the 8 MiB screenshot showed 78 ms during the test, without a final latency value. These are one run per variant, with variable server steal time. The diagnostic clients also add a localhost SOCKS bridge compared with the daily baseline, so the earlier controlled alternating builds remain the stronger causal comparison. The daily core and server configuration were restored and not upgraded.
+
 A larger window increased short-request tail latency under a saturating download. It should not silently become a universal tuning recommendation. Consider a documented, bounded, opt-in XHTTP window option, or an upstream design for adaptive receive credit, with latency and memory validation. Existing YAML has no corresponding option; this installer does not emit a fictional field. Increasing only the server's receive window would affect the opposite direction and does not replace this client-side change.
 
 ## XMUX lifetime and request budget semantics

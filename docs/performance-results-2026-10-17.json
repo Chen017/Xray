@@ -271,5 +271,80 @@
     "Small repeated experiment, not broad statistical validation"
   ],
   "daily_parameters_changed": false,
-  "pushed_or_deployed": false
+  "pushed_or_deployed": false,
+  "manual_ipa_single_acceptance": {
+    "date": "2026-10-17",
+    "endpoint": "IPA CyberLab 400G Tokyo",
+    "runs_per_variant": 1,
+    "baseline": {
+      "window_mib": 4,
+      "download_mbps": 456.35,
+      "idle_ping_ms": 73,
+      "download_ping_ms": 74,
+      "client": "official Mihomo"
+    },
+    "window8": {
+      "window_mib": 8,
+      "download_mbps": 722,
+      "final_result_source": "user text confirmation",
+      "in_progress_screenshot_mbps": 725.09,
+      "screenshot_idle_ping_ms": 74,
+      "screenshot_download_ping_ms": 78,
+      "final_download_ping_ms": null,
+      "client": "isolated diagnostic build"
+    },
+    "window16": {
+      "window_mib": 16,
+      "download_mbps": 777,
+      "idle_ping_ms": 79,
+      "download_ping_ms": 140,
+      "client": "isolated diagnostic build"
+    },
+    "server_metrics": {
+      "server_pid": 38021,
+      "logical_cpus": 1,
+      "filter": "non-loopback interface over 100 Mbps; one-second deltas",
+      "phases": {
+        "official-baseline": {
+          "active_samples": 31,
+          "mean": {
+            "system_busy_percent": 46.1,
+            "xray_one_core_percent": 40.43,
+            "busiest_thread_one_core_percent": 26.4,
+            "steal_percent": 1.36
+          }
+        },
+        "diagnostic-window8": {
+          "active_samples": 30,
+          "mean": {
+            "system_busy_percent": 59.83,
+            "xray_one_core_percent": 48.99,
+            "busiest_thread_one_core_percent": 36.2,
+            "steal_percent": 15.02
+          }
+        },
+        "diagnostic-window16": {
+          "active_samples": 15,
+          "mean": {
+            "system_busy_percent": 58.51,
+            "xray_one_core_percent": 49.03,
+            "busiest_thread_one_core_percent": 41.86,
+            "steal_percent": 9.03
+          }
+        }
+      }
+    },
+    "limitations": [
+      "One final download result per variant; no statistical certainty",
+      "Baseline uses daily official process; diagnostic candidates add localhost SOCKS and direct bridge",
+      "Window8 loaded ping was captured during test, not a final value",
+      "Host steal time varied across phases",
+      "No long-term daily browsing acceptance"
+    ],
+    "original_profile_bytes_unchanged": true,
+    "all_selectors_restored": true,
+    "temporary_clients_stopped": true,
+    "server_sampler_stopped": true,
+    "production_restarted_by_test": false
+  }
 }
