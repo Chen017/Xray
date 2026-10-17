@@ -7,10 +7,13 @@ from pathlib import Path
 root = Path(sys.argv[1])
 repo = Path(sys.argv[2])
 root.mkdir(exist_ok=True)
-with zipfile.ZipFile(root / 'core.zip', 'w') as archive:
-    archive.writestr('xray', '#!/bin/bash\nif [[ $1 == version ]]; then echo "Xray 99.0.1"; else exit 0; fi\n')
-digest = hashlib.sha256((root / 'core.zip').read_bytes()).hexdigest()
-(root / 'core.dgst').write_text('SHA2-256= ' + digest + '\n')
+for name, version in (('core', '26.3.27'), ('wrong-core', '99.0.1')):
+    with zipfile.ZipFile(root / f'{name}.zip', 'w') as archive:
+        archive.writestr('xray', f'#!/bin/bash\nif [[ $1 == version ]]; then echo "Xray {version}"; else exit 0; fi\n')
+        archive.writestr('geoip.dat', 'fixture asset\n')
+        archive.writestr('geosite.dat', 'fixture asset\n')
+    digest = hashlib.sha256((root / f'{name}.zip').read_bytes()).hexdigest()
+    (root / f'{name}.dgst').write_text('SHA2-256= ' + digest + '\n')
 with zipfile.ZipFile(root / 'incomplete-sh.zip', 'w') as archive:
     archive.write(repo / 'xray.sh', 'xray.sh')
 for bad in (False, True):

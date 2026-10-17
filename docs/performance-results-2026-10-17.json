@@ -1,0 +1,275 @@
+{
+  "date": "2026-10-17",
+  "server_core": "Xray 26.3.27",
+  "official_client": "Mihomo 1.19.32",
+  "diagnostic_compiler": "Go 1.26.8, with_gvisor, Windows amd64",
+  "browser_baseline": {
+    "xhttp_final_download_mbps": 432.47,
+    "vision_in_progress_mbps": 757.21,
+    "user_corrected_approximate_limit_mbps": 800
+  },
+  "official_client_comparison": [
+    {
+      "client": "mihomo",
+      "attempt": 1,
+      "mbps": 411.4741613337999,
+      "client_one_core_percent": 35.92642268635681,
+      "bridge_one_core_percent": 35.62703583063717
+    },
+    {
+      "client": "xray",
+      "attempt": 1,
+      "mbps": 401.84948502959435,
+      "client_one_core_percent": 54.96818862270719,
+      "bridge_one_core_percent": 35.086077844281185
+    },
+    {
+      "client": "mihomo",
+      "attempt": 2,
+      "mbps": 399.5318414883721,
+      "client_one_core_percent": 28.488372093023255,
+      "bridge_one_core_percent": 36.04651162790697
+    },
+    {
+      "client": "xray",
+      "attempt": 2,
+      "mbps": 403.05624024013895,
+      "client_one_core_percent": 60.118712462447355,
+      "bridge_one_core_percent": 41.056681681671364
+    }
+  ],
+  "controlled_window_ab": [
+    {
+      "client": "window4",
+      "attempt": 1,
+      "mbps": 405.41507419304185,
+      "client_one_core_percent": 31.857655276579695,
+      "bridge_one_core_percent": 29.792807249393974
+    },
+    {
+      "client": "window16",
+      "attempt": 1,
+      "mbps": 673.6146951062441,
+      "client_one_core_percent": 47.05144291088759,
+      "bridge_one_core_percent": 44.600846925945525
+    },
+    {
+      "client": "window4",
+      "attempt": 2,
+      "mbps": 417.79837509732357,
+      "client_one_core_percent": 25.53501945525581,
+      "bridge_one_core_percent": 26.446984435800662
+    },
+    {
+      "client": "window16",
+      "attempt": 2,
+      "mbps": 827.8657085590659,
+      "client_one_core_percent": 45.176368542837686,
+      "bridge_one_core_percent": 44.57401696226652
+    }
+  ],
+  "window_latency_and_memory": [
+    {
+      "window_mib": 4,
+      "attempt": 1,
+      "utc_start": "2026-10-17T02:54:21Z",
+      "short_without_download": {
+        "p50_ms": 186.99999999807915,
+        "p95_ms": 203.00000000133878
+      },
+      "single_download_mbps": 361.6510016843948,
+      "short_during_download": {
+        "p50_ms": 156.00000000267755,
+        "p95_ms": 171.99999999866122
+      },
+      "competing_download_mbps": 430.78909689062175,
+      "rss_peak_mib": 34.1796875,
+      "utc_end": "2026-10-17T02:54:31Z"
+    },
+    {
+      "window_mib": 8,
+      "attempt": 1,
+      "utc_start": "2026-10-17T02:54:31Z",
+      "short_without_download": {
+        "p50_ms": 186.99999999807915,
+        "p95_ms": 203.00000000133878
+      },
+      "single_download_mbps": 540.927871032587,
+      "short_during_download": {
+        "p50_ms": 202.9999999977008,
+        "p95_ms": 233.99999999674037
+      },
+      "competing_download_mbps": 743.0739266437483,
+      "rss_peak_mib": 33.4765625,
+      "utc_end": "2026-10-17T02:54:38Z"
+    },
+    {
+      "window_mib": 16,
+      "attempt": 1,
+      "utc_start": "2026-10-17T02:54:38Z",
+      "short_without_download": {
+        "p50_ms": 188.00000000192085,
+        "p95_ms": 203.00000000133878
+      },
+      "single_download_mbps": 572.6623061333333,
+      "short_during_download": {
+        "p50_ms": 266.00000000325963,
+        "p95_ms": 313.00000000192085
+      },
+      "competing_download_mbps": 780.9031447272728,
+      "rss_peak_mib": 33.54296875,
+      "utc_end": "2026-10-17T02:54:45Z"
+    },
+    {
+      "window_mib": 4,
+      "attempt": 2,
+      "utc_start": "2026-10-17T02:54:45Z",
+      "short_without_download": {
+        "p50_ms": 156.00000000267755,
+        "p95_ms": 171.99999999866122
+      },
+      "single_download_mbps": 421.5711912055612,
+      "short_during_download": {
+        "p50_ms": 164.0000000006694,
+        "p95_ms": 172.00000000593718
+      },
+      "competing_download_mbps": 436.3030572939017,
+      "rss_peak_mib": 37.59765625,
+      "utc_end": "2026-10-17T02:54:54Z"
+    },
+    {
+      "window_mib": 8,
+      "attempt": 2,
+      "utc_start": "2026-10-17T02:54:54Z",
+      "short_without_download": {
+        "p50_ms": 171.99999999866122,
+        "p95_ms": 187.9999999946449
+      },
+      "single_download_mbps": 723.0584673397839,
+      "short_during_download": {
+        "p50_ms": 202.99999999406282,
+        "p95_ms": 219.0000000045984
+      },
+      "competing_download_mbps": 731.1827197825688,
+      "rss_peak_mib": 37.39453125,
+      "utc_end": "2026-10-17T02:55:00Z"
+    },
+    {
+      "window_mib": 16,
+      "attempt": 2,
+      "utc_start": "2026-10-17T02:55:00Z",
+      "short_without_download": {
+        "p50_ms": 164.0000000006694,
+        "p95_ms": 172.00000000593718
+      },
+      "single_download_mbps": 763.1427320544261,
+      "short_during_download": {
+        "p50_ms": 289.0000000006694,
+        "p95_ms": 391.00000000325963
+      },
+      "competing_download_mbps": 755.3583003867142,
+      "rss_peak_mib": 37.36328125,
+      "utc_end": "2026-10-17T02:55:06Z"
+    }
+  ],
+  "xmux_candidate": [
+    {
+      "window_mib": 8,
+      "down_xmux": "8-16",
+      "attempt": 1,
+      "utc_start": "2026-10-17T03:01:13Z",
+      "warmup_failures": 0,
+      "short_without_download": {
+        "p50_ms": 187.99999999828287,
+        "p95_ms": 203.00000000133878
+      },
+      "single_download_mbps": 554.0463488126603,
+      "short_during_download": {
+        "p50_ms": 186.99999999807915,
+        "p95_ms": 218.99999999732245
+      },
+      "competing_download_mbps": 746.9508340869565,
+      "rss_peak_mib": 33.578125,
+      "utc_end": "2026-10-17T03:01:21Z"
+    },
+    {
+      "window_mib": 8,
+      "down_xmux": "2-4",
+      "attempt": 1,
+      "utc_start": "2026-10-17T03:01:21Z",
+      "warmup_failures": 0,
+      "short_without_download": {
+        "p50_ms": 203.00000000133878,
+        "p95_ms": 203.99999999790452
+      },
+      "single_download_mbps": 541.2005161299214,
+      "short_during_download": {
+        "p50_ms": 210.50000000104774,
+        "p95_ms": 578.0000000013388
+      },
+      "competing_download_mbps": 723.3020033670172,
+      "rss_peak_mib": 35.98046875,
+      "utc_end": "2026-10-17T03:01:29Z"
+    },
+    {
+      "window_mib": 8,
+      "down_xmux": "8-16",
+      "attempt": 2,
+      "utc_start": "2026-10-17T03:01:29Z",
+      "warmup_failures": 0,
+      "short_without_download": {
+        "p50_ms": 164.49999999895226,
+        "p95_ms": 187.0000000053551
+      },
+      "single_download_mbps": 715.8278826666666,
+      "short_during_download": {
+        "p50_ms": 188.00000000192085,
+        "p95_ms": 218.0000000007567
+      },
+      "competing_download_mbps": 715.8278826666666,
+      "rss_peak_mib": 36.34375,
+      "utc_end": "2026-10-17T03:01:35Z"
+    },
+    {
+      "window_mib": 8,
+      "down_xmux": "2-4",
+      "attempt": 2,
+      "utc_start": "2026-10-17T03:01:35Z",
+      "warmup_failures": 0,
+      "short_without_download": {
+        "p50_ms": 171.99999999866122,
+        "p95_ms": 188.00000000192085
+      },
+      "single_download_mbps": 701.3336538198055,
+      "short_during_download": {
+        "p50_ms": 187.5,
+        "p95_ms": 203.99999999790452
+      },
+      "competing_download_mbps": 727.2210118520238,
+      "rss_peak_mib": 38.5859375,
+      "utc_end": "2026-10-17T03:01:41Z"
+    }
+  ],
+  "quic": {
+    "total_attempts": 6,
+    "successes": 5,
+    "cold_start_timeouts": 1,
+    "verified_alpn": "h3",
+    "tls_verified": true,
+    "verified_newnb_chain": true
+  },
+  "source_semantics_probe": {
+    "expired_active_entry_reused": true,
+    "actual_http_requests": 2,
+    "request_budget_consumed": 1
+  },
+  "limitations": [
+    "Temporary origin is not the IPA Speedtest endpoint",
+    "Diagnostic builds were not installed as the daily client",
+    "Large-window load latency is worse in this workload; no unconditional default recommendation",
+    "Windows thread enumeration unavailable; process CPU is used",
+    "Small repeated experiment, not broad statistical validation"
+  ],
+  "daily_parameters_changed": false,
+  "pushed_or_deployed": false
+}

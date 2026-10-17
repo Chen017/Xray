@@ -53,6 +53,8 @@ for module in runtime firewall core maintenance routing diagnostics status expor
 done
 check() { if ! "$@"; then printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
 pass() { printf 'PASS: %s\n' "$*"; }
+check test "$("$is_core_bin" version | awk 'NR==1 {print $2}')" = 26.3.27
+pass 'real regression runtime is the fixed Xray 26.3.27'
 get_ip() { ip=203.0.113.10; }
 get_ipv6() { ipv6=2001:db8::10; }
 get_port() { tmp_port=443; }
@@ -226,16 +228,20 @@ check test "$_ov_v4_sni" = us.kjwing.com
 unset -f clear
 pass 'original terminal overview, sections, numbering and exit behavior are restored'
 
-release_fixture='{"tag_name":"v26.3.27","prerelease":false,"draft":false}'
-curl() { printf '%s\n' "$release_fixture"; }
+release_fixture='{"tag_name":"v99.0.1","prerelease":false,"draft":false}'
+curl() { touch "$scratch/release-queried"; printf '%s\n' "$release_fixture"; }
 check get_latest_version core
 check test "$latest_ver" = v26.3.27
+check test ! -e "$scratch/release-queried"
+check get_latest_version sh
+check test "$latest_ver" = v99.0.1
+check test -e "$scratch/release-queried"
 release_fixture='{"tag_name":"v26.9.9","prerelease":true,"draft":false}'
-if get_latest_version core; then echo 'FAIL: prerelease accepted as stable'; exit 1; fi
+if get_latest_version sh; then echo 'FAIL: prerelease accepted as stable'; exit 1; fi
 release_fixture='{"tag_name":"v26.9.9","prerelease":false,"draft":true}'
-if get_latest_version core; then echo 'FAIL: draft accepted as stable'; exit 1; fi
+if get_latest_version sh; then echo 'FAIL: draft accepted as stable'; exit 1; fi
 unset -f curl
-pass 'stable updater rejects prereleases and drafts'
+pass 'core never queries latest; script updates still reject prereleases and drafts'
 
 fetch_file() { return 22; }
 before=$(configuration_content "$is_core_dir")
@@ -291,31 +297,43 @@ unset -f fetch_file
 fixture="$scratch/fixtures"
 check python "$repo/tests/update_fixtures.py" "$fixture" "$repo"
 fetch_file() {
+    printf '%s\n' "$1" >> "$scratch/update-requests"
     case "$1" in
-        *.zip.dgst) cp "$fixture/core.dgst" "$2" ;;
-        *Xray-linux-*.zip) cp "$fixture/core.zip" "$2" ;;
+        *.zip.dgst) cp "$fixture/${core_fixture:-core}.dgst" "$2" ;;
+        *Xray-linux-*.zip) cp "$fixture/${core_fixture:-core}.zip" "$2" ;;
         *code.zip) cp "$fixture/${script_fixture:-sh.zip}" "$2" ;;
         *) return 22 ;;
     esac
 }
 real_bin="$is_core_bin"
 is_core_bin="$is_core_dir/bin/xray"
-cp "$real_bin" "$is_core_bin"
+# Simulate an existing older installation while keeping the real parser available.
+printf '#!/bin/bash\nif [[ $1 == version ]]; then echo "Xray 26.2.6"; else exec %q "$@"; fi\n' "$real_bin" > "$is_core_bin"
 chmod +x "$is_core_bin"
 is_core_arch=64
 is_core_repo=XTLS/Xray-core
 is_sh_repo=Chen017/Xray
 is_sh_ver=v2.5.4
 old_hash=$(sha256sum "$is_core_bin" | cut -d' ' -f1)
+if safe_update core v99.0.1; then echo 'FAIL: explicit non-pinned core accepted'; exit 1; fi
+check test ! -e "$scratch/update-requests"
+core_fixture=wrong-core
+if safe_update core; then echo 'FAIL: mislabeled core binary accepted'; exit 1; fi
+check test "$old_hash" = "$(sha256sum "$is_core_bin" | cut -d' ' -f1)"
+core_fixture=core
 touch "$TEST_STATE/fail-start"
-if safe_update core v99.0.1; then echo 'FAIL: update restart failure hidden'; exit 1; fi
+if safe_update core; then echo 'FAIL: update restart failure hidden'; exit 1; fi
 check test "$old_hash" = "$(sha256sum "$is_core_bin" | cut -d' ' -f1)"
 check test "$old_hash" = "$(sha256sum "$is_core_bin.previous" | cut -d' ' -f1)"
 check service_active
-check safe_update core v99.0.1
-check grep -q '99.0.1' "$is_core_bin"
+check safe_update core v26.3.27
+check grep -q '26.3.27' "$is_core_bin"
 check test "$old_hash" = "$(sha256sum "$is_core_bin.previous" | cut -d' ' -f1)"
-pass 'core update validates checksums, keeps previous binary and rolls back failed restart'
+check grep -q '/v26.3.27/Xray-linux-64.zip' "$scratch/update-requests"
+requests=$(wc -l < "$scratch/update-requests")
+check safe_update core
+check test "$requests" = "$(wc -l < "$scratch/update-requests")"
+pass 'core update enforces fixed tag/binary, skips current version and retains restart rollback'
 is_core_bin="$real_bin"
 
 is_sh_dir="$is_core_dir/sh"
@@ -344,24 +362,31 @@ pass 'script update rejects bad syntax, keeps previous scripts and preserves ext
     is_core_ok="$scratch/bootstrap.ok"
     is_core_ver=''
     _wget() {
-        if [[ $* == *api.github.com* ]]; then echo '{"tag_name":"v99.0.1"}'; return; fi
+        if [[ $* == *api.github.com* ]]; then echo 'FAIL: bootstrap queried latest' >&2; return 1; fi
         local target="${@: -1}"
         if [[ $* == *.dgst* ]]; then
             if [[ ${bootstrap_bad:-0} == 1 ]]; then printf 'SHA2-256= %064d\n' 0 > "$target"
             else cp "$fixture/core.dgst" "$target"; fi
         else
-            [[ $* == *releases/download/v99.0.1/Xray-linux-64.zip* ]] || return 1
+            [[ $* == *releases/download/v26.3.27/Xray-linux-64.zip* ]] || return 1
             cp "$fixture/core.zip" "$target"
         fi
     }
     check download core
     check cmp "$fixture/core.zip" "$is_core_ok"
+    check validate_core_archive "$is_core_ok" "$scratch/bootstrap-valid"
+    if validate_core_archive "$fixture/wrong-core.zip" "$scratch/bootstrap-wrong"; then
+        echo 'FAIL: bootstrap accepted a custom core with a different version'; exit 1
+    fi
     rm "$is_core_ok"
     bootstrap_bad=1
     if download core; then echo 'FAIL: bootstrap accepted bad checksum'; exit 1; fi
     check test ! -f "$is_core_ok"
+    bootstrap_bad=0
+    is_core_ver=v99.0.1
+    if download core; then echo 'FAIL: bootstrap accepted a non-pinned override'; exit 1; fi
 ) || exit 1
-pass 'bootstrap pins the core release and rejects an incorrect checksum'
+pass 'bootstrap pins release, validates custom binary version and rejects incorrect checksum/override'
 
 (
     . <(sed -n '/^pass_args() {/,/^# exit and remove tmpdir/p' "$repo/install.sh")
@@ -374,6 +399,10 @@ pass 'bootstrap pins the core release and rejects an incorrect checksum'
     check test "$preset_install_mode" = "1"
     pass_args --standard
     check test "$preset_install_mode" = "1"
+    unset is_core_ver is_core_file
+    pass_args -v 26.3.27
+    check test "$is_core_ver" = v26.3.27
+    if (pass_args --core-version v99.0.1); then echo 'FAIL: install CLI accepted a non-pinned core'; exit 1; fi
 
     test_mode=""
     prompt_input "请选择" test_mode "1" <<< ""

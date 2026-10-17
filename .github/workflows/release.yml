@@ -2,7 +2,7 @@ name: Validate and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/beta]
   pull_request:
   workflow_dispatch:
 
@@ -27,11 +27,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tests/fetch_tools.py
-      - name: Isolated regression against pinned and current Xray
+      - name: Check runtime refresh and version policy
+        run: python -m unittest discover -s tests -p 'fetch_tools_checks.py'
+      - name: Isolated regression against Xray 26.3.27 and latest stable Mihomo
         run: |
-          for binary in .test-tools/v*/xray; do
-            XRAY_TEST_BIN="$PWD/$binary" MIHOMO_TEST_BIN="$PWD/.test-tools/mihomo" bash tests/regression.sh
-          done
+          cat .test-tools/runtimes.json
+          XRAY_TEST_BIN="$PWD/.test-tools/v26.3.27/xray" MIHOMO_TEST_BIN="$PWD/.test-tools/mihomo" bash tests/regression.sh
+      - name: Record tested runtime versions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-runtimes
+          path: .test-tools/runtimes.json
 
   release:
     needs: validate

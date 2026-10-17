@@ -1,8 +1,13 @@
 #!/bin/bash
 
+is_core_pinned_version=v26.3.27
+
 get_latest_version() {
-    local repo="$is_core_repo" response
-    [[ $1 != sh ]] || repo="$is_sh_repo"
+    if [[ ${1:-core} == core ]]; then
+        latest_ver="$is_core_pinned_version"
+        return 0
+    fi
+    local repo="$is_sh_repo" response
     response=$(curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 \
         "https://api.github.com/repos/$repo/releases/latest") || return 1
     latest_ver=$(jq -er 'select(.prerelease == false and .draft == false) |
@@ -16,6 +21,9 @@ safe_update() (
     if [[ -n "$requested" ]]; then version="v${requested#v}"
     else get_latest_version "$kind" || { _fail "无法获取最新版本，现有安装保留"; exit 1; }; version="$latest_ver"; fi
     [[ $version =~ ^v[0-9]+(\.[0-9]+){2}$ ]] || { _fail "版本格式无效"; exit 1; }
+    [[ $kind != core || $version == "$is_core_pinned_version" ]] || {
+        _fail "内核固定为 $is_core_pinned_version，不能安装 $version"; exit 1;
+    }
     current="$is_sh_ver"
     [[ $kind != core ]] || current="v$("$is_core_bin" version | awk 'NR==1 {print $2}' | sed 's/^v//')"
     [[ $current != "$version" ]] || { _info "当前已是 $version"; exit 0; }

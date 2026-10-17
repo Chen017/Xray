@@ -25,7 +25,28 @@
             if [[ $export_format == yaml ]]; then
                 awk '/^- name:/ {show=1} show' "$scratch/$mode-interactive.txt" > "$scratch/$mode.yaml"
                 check grep -q 'short-id: 12345678' "$scratch/$mode.yaml"
-                check grep -q 'sockopt:' "$scratch/$mode.yaml"
+                check grep -q '^  tfo: true$' "$scratch/$mode.yaml"
+                check grep -q '^  mptcp: true$' "$scratch/$mode.yaml"
+                check grep -q '^  udp: true$' "$scratch/$mode.yaml"
+                if grep -q 'sockopt:' "$scratch/$mode.yaml"; then
+                    echo 'FAIL: ignored Mihomo sockopt block was exported'; exit 1
+                fi
+                if [[ $mode != vision ]]; then
+                    for parameter in 'x-padding-bytes: "100-1000"' 'x-padding-obfs-mode: true' \
+                        'x-padding-placement: queryInHeader' 'x-padding-method: tokenish' \
+                        'x-padding-key: x_padding' 'x-padding-header: Referer' \
+                        'no-grpc-header: true' 'session-placement: path' 'seq-placement: path'; do
+                        check grep -Fqx "    $parameter" "$scratch/$mode.yaml"
+                    done
+                    check grep -q '^      max-concurrency: "16-32"$' "$scratch/$mode.yaml"
+                fi
+                if [[ $mode == split ]]; then
+                    check grep -q '^      client-fingerprint: firefox$' "$scratch/$mode.yaml"
+                    check grep -q '^        max-concurrency: "8-16"$' "$scratch/$mode.yaml"
+                    if grep -qE '^      (x-padding-|no-grpc-header:|session-placement:|seq-placement:)' "$scratch/$mode.yaml"; then
+                        echo 'FAIL: ignored download-settings overrides were exported'; exit 1
+                    fi
+                fi
             else
                 grep '^vless://' "$scratch/$mode-interactive.txt" > "$scratch/$mode.link"
                 check test -s "$scratch/$mode.link"

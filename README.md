@@ -44,7 +44,10 @@
 
 - 支持系统：Ubuntu / Debian / CentOS（含无特权 LXC 容器与 NAT VPS）
 - 架构：x86_64 / arm64
-- Xray 版本：跟随 [XTLS/Xray-core](https://github.com/XTLS/Xray-core) 最新 Release 自动拉取
+- Xray 版本：固定使用 [XTLS/Xray-core v26.3.27](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27)，安装、重装和核心更新均遵循该版本；脚本与 geodata 可独立更新。
+- Mihomo 客户端：跟随最新正式 Release；测试记录具体核心版本。仅在 Mihomo 明确支持其它 Xray 版本后重新评估服务端升级。
+
+Beta 的版本策略、导出清理和实际线路结果见 [验证记录](docs/newnb-validation-2026-10-17.md)。其中提供临时配置 A/B 工具，自动保留并恢复日常订阅的选择组，避免手工粘贴 YAML。
 
 ## ⚡ 快速开始
 
