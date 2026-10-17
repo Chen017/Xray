@@ -17,6 +17,7 @@
 ## 🛠️ 脚本功能大纲
 
 - 自动加速优化：内核支持时启用 BBR；TFO 与 MPTCP 的效果取决于内核、网络和客户端。支持选择真正的 Happy Eyeballs 双栈 TCP 连接竞速（需 Xray v25.6.8+）；`UseIPv4v6` 仅表示解析优先，不等于连接失败回退。
+- 双栈入口隔离：IPv4 绑定本机路由源地址，IPv6 设置 IPv6-only，避免两个同端口通配监听器争抢连接、进入错误的 REALITY SNI；已有脚本配置自动事务迁移。[实测与修复记录](docs/xhttp-delay-investigation-2026-10-17.md)。
 - 安全探针：
   - 每次打开脚本连接国内测试节点的 TCP 80 端口，检查 IPv4/IPv6 出站连通性；结果不能证明国内客户端到本机是否被阻断。
   - SNI 安全自检：每次打开脚本检查伪装域名的证书、TLS 1.3 与 h2，返回菜单时复用本次结果，可手动刷新。
@@ -44,7 +45,10 @@
 
 - 支持系统：Ubuntu / Debian / CentOS（含无特权 LXC 容器与 NAT VPS）
 - 架构：x86_64 / arm64
-- Xray 版本：跟随 [XTLS/Xray-core](https://github.com/XTLS/Xray-core) 最新 Release 自动拉取
+- Xray 版本：固定使用 [XTLS/Xray-core v26.3.27](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27)，安装、重装和核心更新均遵循该版本；脚本与 geodata 可独立更新。
+- Mihomo 客户端：跟随最新正式 Release；测试记录具体核心版本。仅在 Mihomo 明确支持其它 Xray 版本后重新评估服务端升级。
+
+v2.7.8 已合并本轮版本策略、导出清理与监听修复，实际线路结果见 [验证记录](docs/newnb-validation-2026-10-17.md)。其中提供临时配置 A/B 工具，自动保留并恢复日常订阅的选择组，避免手工粘贴 YAML。
 
 ## ⚡ 快速开始
 

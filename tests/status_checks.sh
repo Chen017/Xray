@@ -15,10 +15,11 @@ pass 'firewall overview includes reachable custom chains, multiports and ranges,
 (
     ss() {
         printf '%s\n' 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*' \
-            'tcp LISTEN 0 128 [::]:443 [::]:*' 'udp UNCONN 0 0 127.0.0.1:5353 0.0.0.0:*' \
+            'tcp LISTEN 0 128 [::]:443 [::]:*' 'udp UNCONN 0 0 127.0.0.1:53 0.0.0.0:*' \
             'tcp LISTEN 0 128 [::]:443 [::]:*'
     }
-    check test "$(system_listening_ports)" = 22,443,5353
+    # Keep the UDP fixture below tuned ephemeral ranges (e.g. 1024..65535).
+    check test "$(system_listening_ports)" = 22,53,443
     ss() { return 1; }
     check test "$(system_listening_ports)" = 读取失败
 ) || exit 1

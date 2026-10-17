@@ -1,0 +1,179 @@
+{
+  "date": "2026-10-16",
+  "repository_head": "cc104c7",
+  "environment": "Windows loopback only; Unix fallback replaced with loopback TCP; test-only finalRules permits 127.0.0.1/32",
+  "xray_stable": "26.3.27",
+  "xray_prerelease": "26.10.10",
+  "mihomo": "1.19.32",
+  "tcp": [
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "vision",
+      "mlkem": false,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "single",
+      "mlkem": false,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": false,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "firefox"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "vision",
+      "mlkem": false,
+      "success": false,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "single",
+      "mlkem": false,
+      "success": false,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": false,
+      "success": false,
+      "error": "",
+      "downlink_fingerprint": "firefox"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "vision",
+      "mlkem": true,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "single",
+      "mlkem": true,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "n/a"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": true,
+      "success": false,
+      "error": "",
+      "downlink_fingerprint": "firefox"
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": true,
+      "success": true,
+      "error": "",
+      "downlink_fingerprint": "chrome"
+    }
+  ],
+  "udp": [
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "vision",
+      "mlkem": false,
+      "chrome_down": false,
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "single",
+      "mlkem": false,
+      "chrome_down": false,
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.3.27",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": false,
+      "chrome_down": false,
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.3.27",
+      "client": "Xray 26.3.27",
+      "mode": "vision",
+      "flow": "xtls-rprx-vision",
+      "udp_echo": true,
+      "udp_443_echo": false
+    },
+    {
+      "server": "26.3.27",
+      "client": "Xray 26.3.27",
+      "mode": "vision",
+      "flow": "xtls-rprx-vision-udp443",
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "vision",
+      "mlkem": true,
+      "chrome_down": false,
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "single",
+      "mlkem": true,
+      "chrome_down": false,
+      "udp_echo": true,
+      "udp_443_echo": true
+    },
+    {
+      "server": "26.10.10",
+      "client": "Mihomo 1.19.32",
+      "mode": "split",
+      "mlkem": true,
+      "chrome_down": true,
+      "udp_echo": true,
+      "udp_443_echo": true
+    }
+  ],
+  "limitations": [
+    "No real IPv4/IPv6 path test",
+    "No censorship resistance measurement",
+    "No throughput or loss benchmark",
+    "No NAT or migration guarantee test",
+    "No v2rayN GUI import test"
+  ]
+}

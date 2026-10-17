@@ -106,6 +106,7 @@ esac
 
 is_core=xray
 is_core_name=Xray
+is_core_pinned_version=v26.3.27
 is_core_dir=/usr/local/etc/$is_core
 is_core_bin=$is_core_dir/bin/$is_core
 is_core_repo=xtls/$is_core-core
@@ -114,7 +115,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip openssl iptables util-linux logrotate ca-certificates"
+is_pkg="wget curl unzip openssl iptables util-linux logrotate ca-certificates ip"
 is_config_json=$is_core_dir/config.json
 tmp_var_lists=(
     tmpcore
@@ -173,10 +174,10 @@ show_help() {
     echo
     echo -e "  用法: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
     echo
-    echo -e "  ${green}-f, --core-file${none} <path>    自定义 $is_core_name 文件路径"
+    echo -e "  ${green}-f, --core-file${none} <path>    本地 $is_core_name 压缩包 (仅 $is_core_pinned_version)"
     echo -e "  ${green}-l, --local-install${none}       本地获取安装脚本, 使用当前目录"
     echo -e "  ${green}-p, --proxy${none} <addr>        使用代理下载, e.g., http://127.0.0.1:2333"
-    echo -e "  ${green}-v, --core-version${none} <ver>  自定义 $is_core_name 版本, e.g., v1.8.1"
+    echo -e "  ${green}-v, --core-version${none} <ver>  确认固定版本 $is_core_pinned_version"
     echo -e "  ${green}-m, --mode${none} <standard|landing>  安装模式 (标准节点 / 纯落地机)"
     echo -e "  ${green}--landing${none}                     快捷指定纯落地机模式"
     echo -e "  ${green}-h, --help${none}                显示此帮助界面"
@@ -188,8 +189,15 @@ show_help() {
 # install dependent pkg
 install_pkg() {
     cmd_not_found=
+    local package_name
     for i in $*; do
-        [[ ! $(type -P $i) ]] && cmd_not_found="$cmd_not_found,$i"
+        if [[ ! $(type -P $i) ]]; then
+            package_name=$i
+            if [[ $i == ip ]]; then
+                if [[ $cmd =~ yum ]]; then package_name=iproute; else package_name=iproute2; fi
+            fi
+            cmd_not_found="$cmd_not_found,$package_name"
+        fi
     done
     if [[ $cmd_not_found ]]; then
         pkg=$(echo $cmd_not_found | sed 's/,/ /g')
@@ -212,12 +220,10 @@ install_pkg() {
 download() {
     case $1 in
     core)
-        local core_version="$is_core_ver"
-        if [[ -z $core_version ]]; then
-            core_version=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest" |
-                sed -n 's/.*"tag_name": *"\(v[0-9][0-9.]*\)".*/\1/p' | head -1)
-        fi
-        [[ $core_version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { _fail "无法确认内核发布版本"; return 1; }
+        local core_version="$is_core_pinned_version"
+        [[ -z $is_core_ver || $is_core_ver == "$core_version" ]] || {
+            _fail "内核固定为 $core_version，不能安装 $is_core_ver"; return 1;
+        }
         link="https://github.com/${is_core_repo}/releases/download/${core_version}/Xray-linux-${is_core_arch}.zip"
         name=$is_core_name
         tmpfile=$tmpcore
@@ -248,6 +254,24 @@ download() {
         fi
         mv -f "$tmpfile" "$is_ok"
     fi
+}
+
+# Check both downloaded and user-supplied archives before changing the installation.
+validate_core_archive() {
+    local archive="$1" target="$2" actual_version file
+    unzip -tq "$archive" >/dev/null || { _fail "内核压缩包损坏"; return 1; }
+    if unzip -Z -1 "$archive" | grep -qE '(^/|(^|/)\.\.(/|$)|^[a-zA-Z]:)'; then
+        _fail "压缩包包含不安全路径"; return 1
+    fi
+    mkdir -p "$target" && unzip -qo "$archive" -d "$target" || return 1
+    for file in "$is_core" geoip.dat geosite.dat; do
+        [[ -s "$target/$file" ]] || { _fail "内核压缩包缺少 $file"; return 1; }
+    done
+    chmod +x "$target/$is_core" || return 1
+    actual_version=$("$target/$is_core" version | awk 'NR==1 && $1 == "Xray" {print $2}')
+    [[ "v${actual_version#v}" == "$is_core_pinned_version" ]] || {
+        _fail "内核固定为 $is_core_pinned_version，压缩包版本为 ${actual_version:-未知}"; return 1;
+    }
 }
 
 # get server ip
@@ -325,9 +349,12 @@ pass_args() {
             ;;
         -v | --core-version)
             [[ -z $2 ]] && {
-                err "($1) 缺少必需参数, 正确使用示例: $1 v1.8.1"
+                err "($1) 缺少必需参数, 正确使用示例: $1 $is_core_pinned_version"
             }
             is_core_ver=v${2#v}
+            [[ $is_core_ver == "$is_core_pinned_version" ]] || {
+                err "内核固定为 $is_core_pinned_version，不能安装 $is_core_ver"
+            }
             shift 2
             ;;
         -m | --mode)
@@ -394,7 +421,7 @@ main() {
 
     # start installing...
     _step "开始安装..."
-    [[ $is_core_ver ]] && _info "${is_core_name} 版本: ${yellow}$is_core_ver${none}"
+    _info "${is_core_name} 固定版本: ${yellow}$is_core_pinned_version${none}"
     [[ $proxy ]] && _info "使用代理: ${yellow}$proxy${none}"
     # create tmpdir
     mkdir -p $tmpdir
@@ -432,21 +459,7 @@ main() {
     # check background tasks status
     check_status
 
-    # test $is_core_file
-    if [[ $is_core_file ]]; then
-        unzip -qo $is_core_ok -d $tmpdir/testzip &>/dev/null
-        [[ $? != 0 ]] && {
-            _fail "${is_core_name} 文件无法通过测试"
-            exit_and_del_tmpdir
-        }
-        for i in ${is_core} geoip.dat geosite.dat; do
-            [[ ! -f $tmpdir/testzip/$i ]] && is_file_err=1 && break
-        done
-        [[ $is_file_err ]] && {
-            _fail "${is_core_name} 文件无法通过测试"
-            exit_and_del_tmpdir
-        }
-    fi
+    validate_core_archive "$is_core_ok" "$tmpdir/testzip" || exit_and_del_tmpdir
 
     # get server ip.
     [[ ! $ip ]] && {
@@ -454,17 +467,15 @@ main() {
         exit_and_del_tmpdir
     }
 
-    # create sh dir...
-    mkdir -p $is_sh_dir
-
     # Validate archives before executing any downloaded source.
-    for archive in "$is_core_ok" "$is_sh_ok"; do
-        [[ -s "$archive" ]] || continue
-        unzip -tq "$archive" >/dev/null || err "下载的压缩包损坏"
-        if unzip -Z -1 "$archive" | grep -qE '(^/|(^|/)\.\.(/|$)|^[a-zA-Z]:)'; then
+    if [[ -s "$is_sh_ok" ]]; then
+        unzip -tq "$is_sh_ok" >/dev/null || err "下载的压缩包损坏"
+        if unzip -Z -1 "$is_sh_ok" | grep -qE '(^/|(^|/)\.\.(/|$)|^[a-zA-Z]:)'; then
             err "压缩包包含不安全路径"
         fi
-    done
+    fi
+    # create sh dir...
+    mkdir -p $is_sh_dir
     # copy sh file or unzip sh zip file.
     if [[ $local_install ]]; then
         cp -rf $PWD/* $is_sh_dir
@@ -474,12 +485,7 @@ main() {
 
     # create core bin dir
     mkdir -p $is_core_dir/bin
-    # copy core file or unzip core zip file
-    if [[ $is_core_file ]]; then
-        cp -rf $tmpdir/testzip/* $is_core_dir/bin
-    else
-        unzip -qo $is_core_ok -d $is_core_dir/bin
-    fi
+    cp -rf "$tmpdir/testzip/." "$is_core_dir/bin/"
 
     # add alias
     grep -Fxq "alias $is_core=$is_sh_bin" /root/.bashrc || echo "alias $is_core=$is_sh_bin" >>/root/.bashrc

@@ -7,7 +7,7 @@
     cp -a "$repo/src" "$entry_root/sh/src"
     cp "$is_config_json" "$entry_root/config.json"
     cp -a "$is_conf_dir/." "$entry_root/conf/"
-    printf '1\n' > "$entry_root/.schema-version"
+    printf '2\n' > "$entry_root/.schema-version"
     printf '2\n' > "$entry_root/.maintenance-version"
     sed -e "s@is_core_dir=/usr/local/etc/\$is_core@is_core_dir=$entry_root@" \
         -e 's@is_core_bin=$is_core_dir/bin/$is_core@is_core_bin=$XRAY_TEST_BIN@' \

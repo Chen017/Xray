@@ -130,7 +130,7 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_pkg="wget curl unzip jq flock logrotate"
+is_pkg="wget curl unzip jq flock logrotate ip"
 
 check_dependencies() {
     local missing_pkgs=""
@@ -138,6 +138,10 @@ check_dependencies() {
         if ! command -v "$pkg" &>/dev/null; then
             case "$pkg" in
                 flock) missing_pkgs="$missing_pkgs util-linux" ;;
+                ip)
+                    if [[ $cmd =~ yum ]]; then missing_pkgs="$missing_pkgs iproute"
+                    else missing_pkgs="$missing_pkgs iproute2"; fi
+                    ;;
                 *) missing_pkgs="$missing_pkgs $pkg" ;;
             esac
         fi

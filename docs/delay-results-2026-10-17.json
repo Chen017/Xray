@@ -1,0 +1,119 @@
+{
+  "date": "2026-10-17",
+  "nodes_operated": [
+    "NewNB"
+  ],
+  "server_core": "Xray 26.3.27",
+  "deployed_script_revision": "f84925fda7e9cc8ec525995b1982087a459ad637",
+  "server_core_sha256_unchanged": true,
+  "global_config_bytes_unchanged": true,
+  "protected_node_fields_unchanged": true,
+  "listener_causal_test": {
+    "wildcard": {
+      "samples": 40,
+      "failures": 31
+    },
+    "separated": {
+      "samples": 40,
+      "failures": 0
+    },
+    "preflight_excluded": true
+  },
+  "production_acceptance": {
+    "timeout_ms": 5000,
+    "cold_api": {
+      "samples": 40,
+      "successes": 36
+    },
+    "ordinary_head": {
+      "samples": 20,
+      "successes": 19
+    },
+    "remaining_api_timeouts_not_individually_attributed": 4,
+    "ordinary_tls_timeout": 1,
+    "original_fast_tls_error_observed_after_fix": false,
+    "unreachable_node_correctly_rejected": true,
+    "daily_ui_timeout_unchanged_ms": 20000
+  },
+  "resource": {
+    "samples": 71,
+    "xray_one_core_percent_mean": 0.63,
+    "xray_one_core_percent_peak": 3.0,
+    "fd_before": 21,
+    "fd_after": 21,
+    "rss_after_kib": 63672,
+    "threads_after": 7
+  },
+  "controlled_live_fallback": [
+    {
+      "client": "official",
+      "case": "normal",
+      "status": 200,
+      "response": {
+        "delay": 75
+      },
+      "elapsed_ms": 515.0,
+      "alive": true
+    },
+    {
+      "client": "official",
+      "case": "warmstall",
+      "status": 504,
+      "response": {
+        "message": "Timeout"
+      },
+      "elapsed_ms": 1532.0,
+      "alive": true
+    },
+    {
+      "client": "official",
+      "case": "firststall",
+      "status": 504,
+      "response": {
+        "message": "Timeout"
+      },
+      "elapsed_ms": 1500.0,
+      "alive": false
+    },
+    {
+      "client": "patched",
+      "case": "normal",
+      "status": 200,
+      "response": {
+        "delay": 75
+      },
+      "elapsed_ms": 500.0,
+      "alive": true
+    },
+    {
+      "client": "patched",
+      "case": "warmstall",
+      "status": 200,
+      "response": {
+        "delay": 83
+      },
+      "elapsed_ms": 1515.0,
+      "alive": true
+    },
+    {
+      "client": "patched",
+      "case": "firststall",
+      "status": 504,
+      "response": {
+        "message": "Timeout"
+      },
+      "elapsed_ms": 1531.0,
+      "alive": false
+    }
+  ],
+  "controlled_request_counts_per_client": {
+    "normal": 2,
+    "warmstall": 2,
+    "firststall": 1
+  },
+  "fork_release": "v1.19.32-window.88dcbf7f.f457672f",
+  "fork_source_commit": "d8ff7be547838dbb61cb7aa31e36a91350f990af",
+  "daily_client_replaced": false,
+  "original_profile_restored": true,
+  "hong_kong_and_us_selectors_restored": true
+}

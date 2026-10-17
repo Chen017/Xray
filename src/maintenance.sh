@@ -134,6 +134,22 @@ EOF
     printf '%s\n' "$version" > "$is_core_dir/.maintenance-version"
 }
 
+migrate_dual_stack_listeners() {
+    local file json listen4=""
+    for file in "$is_conf_dir"/*.json; do
+        [[ -f "$file" ]] || continue
+        jq -e 'any(.inbounds[]?; (.tag // "" | test("^public_[0-9]+_v[46]$")))' "$file" >/dev/null || continue
+        if jq -e 'any(.inbounds[]?; (.tag // "" | test("^public_[0-9]+_v4$")) and .listen=="0.0.0.0")' "$file" >/dev/null; then
+            [[ -n "$listen4" ]] || listen4=$(node_ipv4_listen_address) || return 1
+        fi
+        json=$(jq --arg listen4 "$listen4" '
+            (.inbounds[]? | select((.tag // "" | test("^public_[0-9]+_v4$")) and .listen=="0.0.0.0")).listen = $listen4 |
+            (.inbounds[]? | select((.tag // "" | test("^public_[0-9]+_v6$")) and .listen=="::")).streamSettings.sockopt.v6only = true
+        ' "$file") || return 1
+        atomic_json "$file" "$json" || return 1
+    done
+}
+
 apply_schema_migration() {
     local file json
     # Keep the recent upstream relay fixes; do not remove valid REALITY options or reset DNS preferences.
@@ -150,10 +166,11 @@ apply_schema_migration() {
         json=$(jq '(.inbounds[]? | select(.tag == "relay-in")) |= del(.streamSettings.sockopt.tcpFastOpen)' "$file") || return 1
         atomic_json "$file" "$json" || return 1
     fi
-    printf '%s\n' 1 > "${is_config_json%/*}/.schema-version"
+    migrate_dual_stack_listeners || return 1
+    printf '%s\n' 2 > "${is_config_json%/*}/.schema-version"
 }
 
 migrate_installation() {
-    [[ $(cat "$is_core_dir/.schema-version" 2>/dev/null) == 1 ]] && return 0
+    [[ $(cat "$is_core_dir/.schema-version" 2>/dev/null) == 2 ]] && return 0
     config_transaction apply_schema_migration
 }

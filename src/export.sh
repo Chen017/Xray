@@ -149,10 +149,6 @@ info() {
   reality-opts:
     public-key: $is_public_key
     short-id: $uplink_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
   xhttp-opts:
     mode: stream-up
     host: $uplink_sni
@@ -184,21 +180,8 @@ info() {
       reality-opts:
         public-key: $is_public_key
         short-id: $downlink_sid
-      no-grpc-header: true
       host: $downlink_sni
       path: $v4_path
-      x-padding-bytes: "100-1000"
-      x-padding-obfs-mode: true
-      x-padding-placement: queryInHeader
-      x-padding-method: tokenish
-      x-padding-key: x_padding
-      x-padding-header: Referer
-      session-placement: path
-      seq-placement: path
-      sockopt:
-        tcp-fast-open: true
-        tcp-no-delay: true
-        tcp-mptcp: true
       reuse-settings:
         max-concurrency: "8-16"
         c-max-reuse-times: 0
@@ -252,10 +235,6 @@ EOF
   reality-opts:
     public-key: $is_public_key
     short-id: $single_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
   xhttp-opts:
     mode: stream-up
     host: $single_sni
@@ -322,10 +301,6 @@ EOF
   reality-opts:
     public-key: $is_public_key
     short-id: $vision_sid
-  sockopt:
-    tcp-fast-open: true
-    tcp-no-delay: true
-    tcp-mptcp: true
 EOF
         else
             # generate Vision Reality VLESS link
