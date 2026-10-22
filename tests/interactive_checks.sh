@@ -24,7 +24,7 @@
             info <<< "$answers" > "$scratch/$mode-interactive.txt" || true
             if [[ $export_format == yaml ]]; then
                 awk '/^- name:/ {show=1} show' "$scratch/$mode-interactive.txt" > "$scratch/$mode.yaml"
-                check grep -q 'short-id: 12345678' "$scratch/$mode.yaml"
+                check grep -q 'short-id: "12345678"' "$scratch/$mode.yaml"
                 check grep -q '^  tfo: true$' "$scratch/$mode.yaml"
                 check grep -q '^  mptcp: true$' "$scratch/$mode.yaml"
                 check grep -q '^  udp: true$' "$scratch/$mode.yaml"
@@ -113,7 +113,7 @@ EOF
     _reset_state
     info <<< $'3\n3\n1\n2' > "$scratch/relay-export-second.txt" || true
     check grep -q '^vless://33333333-3333-4333-8333-333333333333@203.0.113.10:' "$scratch/relay-export-second.txt"
-    check grep -q '#Premium-Landing-日本落地' "$scratch/relay-export-second.txt"
+    check grep -q "#$(printf '%s' 'Premium-Landing-日本落地' | jq -Rr @uri)" "$scratch/relay-export-second.txt"
     rm -f "$is_relay_state_file"
 
     # Standalone landing config test without xhttp

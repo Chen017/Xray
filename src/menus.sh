@@ -6,6 +6,7 @@ _reset_state() {
     unset is_change is_change_id is_dont_show_info is_auto_get_config is_new_json is_conf_dir_empty
     unset is_addr is_core_stop is_new_protocol is_short_ids is_new_v4_sni is_new_v6_sni is_servername
     unset is_default_arg is_new_v4_path is_new_uuid is_new_port
+    unset is_v6_uplink
     if service_active; then is_core_status="${green}● 运行中${none}"
     else is_core_status="${red}● 已停止${none}"; is_core_stop=1; fi
     if service_active; then is_core_status_short="${green}运行中${none}"

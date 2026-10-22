@@ -14,7 +14,8 @@ firewall_sync() {
     local role="" peer="" relay_port="" ports state='{"open":[],"closed":[]}' tool active next p signature cached=1
     [[ ! -f "$firewall_ports_file" ]] || state=$(cat "$firewall_ports_file")
     if [[ -f "$is_relay_state_file" ]]; then
-        IFS=$'\t' read -r role peer relay_port < <(jq -r '[.role // "", .peer_ip // "", (.listen_port // 0 | tostring)] | @tsv' "$is_relay_state_file")
+        # A non-whitespace separator preserves an empty peer field.
+        IFS='|' read -r role peer relay_port < <(jq -r '[.role // "", .peer_ip // "", (.listen_port // 0 | tostring)] | join("|")' "$is_relay_state_file")
     fi
     if ! firewall_tool_available iptables; then
         if [[ $role == landing ]]; then
@@ -27,7 +28,7 @@ firewall_sync() {
     ports=$(jq -sr --argjson state "$state" '
         ([.[] | .inbounds[]? | select(.streamSettings.security == "reality") | .port] + $state.open) |
         unique - $state.closed | .[]' "$is_conf_dir"/*.json 2>/dev/null) || return 1
-    signature=$(printf '%s\n' "$ports" "$state" "$role" "$peer" "$relay_port" | sha256sum | awk '{print $1}')
+    signature=$(printf '%s\n' firewall-v2 "$ports" "$state" "$role" "$peer" "$relay_port" | sha256sum | awk '{print $1}')
     if [[ $(cat "$is_core_dir/.firewall-signature" 2>/dev/null) == "$signature" ]]; then
         for tool in iptables ip6tables; do
             firewall_tool_available "$tool" || continue
@@ -44,9 +45,16 @@ firewall_sync() {
         "$tool" -w 5 -N "$next" 2>/dev/null || "$tool" -w 5 -F "$next" || return 1
         # Guard the private relay port even when the system INPUT policy is ACCEPT.
         if [[ $role == landing && $tool == iptables ]]; then
-            if [[ -n "$peer" && "$peer" =~ ^[0-9.]+$ && "$relay_port" =~ ^[0-9]+$ ]]; then
-                "$tool" -w 5 -A "$next" -p tcp -s "$peer/32" --dport "$relay_port" -j ACCEPT || return 1
-                "$tool" -w 5 -A "$next" -p tcp --dport "$relay_port" -j DROP || return 1
+            if [[ "$relay_port" =~ ^[0-9]+$ ]] && (( relay_port >= 1 && relay_port <= 65535 )); then
+                if [[ -n "$peer" && "$peer" =~ ^[0-9.]+$ ]]; then
+                    "$tool" -w 5 -A "$next" -p tcp -s "$peer/32" --dport "$relay_port" -j ACCEPT || return 1
+                    "$tool" -w 5 -A "$next" -p tcp --dport "$relay_port" -j DROP || return 1
+                elif [[ -z "$peer" ]]; then
+                    "$tool" -w 5 -A "$next" -p tcp --dport "$relay_port" -j ACCEPT || return 1
+                else
+                    _fail "落地机来源地址无效，保留原规则"
+                    return 1
+                fi
             fi
         fi
         while read -r p; do

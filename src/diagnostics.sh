@@ -1,51 +1,109 @@
 #!/bin/bash
 
-# Connectivity and target checks restored from v2.5.4 (61744f3).
+# DNS and HTTPS run concurrently; no sequential ASN/API request on menu startup.
+_cdn_dns_records() (
+    local domain="$1" work ns n=0 pid
+    local -a pids=() dns_servers=(8.8.8.8 1.1.1.1 208.67.222.222 9.9.9.9)
+    work=$(mktemp -d) || return 1
+    trap 'for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; rm -rf "$work"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    if command -v dig >/dev/null; then
+        for ns in "${dns_servers[@]}"; do
+            dig +short +time=1 +tries=1 A "$domain" @"$ns" > "$work/$n" 2>/dev/null &
+            pids+=("$!"); ((n+=1))
+        done
+    elif command -v nslookup >/dev/null; then
+        for ns in "${dns_servers[@]}"; do
+            (timeout 2 nslookup -timeout=1 -retry=1 "$domain" "$ns" 2>/dev/null |
+                awk '/^Name:/ {answer=1} /canonical name/ {print} answer {print}') > "$work/$n" &
+            pids+=("$!"); ((n+=1))
+        done
+    else
+        timeout 2 getent ahosts "$domain" 2>/dev/null > "$work/0" || true
+    fi
+    for pid in "${pids[@]}"; do wait "$pid" || true; done
+    pids=()
+    cat "$work/"* 2>/dev/null || true
+)
 
 _detect_cdn() {
-    local domain="$1"
-    local dns_servers=("8.8.8.8" "1.1.1.1" "208.67.222.222" "9.9.9.9")
-    local all_ips=""
-
-    if command -v dig &>/dev/null; then
-        # 优先使用 dig
-        for ns in "${dns_servers[@]}"; do
-            local ips=$(dig +short +time=2 +tries=1 A "$domain" @"$ns" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
-        done
-    elif command -v nslookup &>/dev/null; then
-        # 降级到 nslookup
-        for ns in "${dns_servers[@]}"; do
-            local ips=$(nslookup "$domain" "$ns" 2>/dev/null | awk '/^Address:/ && !/#/ {print $2}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-            [[ -n "$ips" ]] && all_ips+="$ips"$'\n'
-        done
+    local domain="$1" response="${2:-}" records="${3:-}" provider="" evidence="" ips cnames
+    [[ $# -ge 3 ]] || records=$(_cdn_dns_records "$domain")
+    # Specific response headers or provider CNAME suffixes are evidence; IP count is not.
+    if grep -Eiq '(^|[[:cntrl:]])(cf-ray:|server:[[:space:]]*cloudflare([[:space:]]|$))' <<< "$response"; then
+        provider=Cloudflare; evidence=HTTP响应头
+    elif grep -Eiq '(^|[[:cntrl:]])x-amz-cf-(id|pop):' <<< "$response"; then
+        provider=CloudFront; evidence=HTTP响应头
+    elif grep -Eiq '(^|[[:cntrl:]])(x-fastly-|server:[[:space:]]*fastly)' <<< "$response"; then
+        provider=Fastly; evidence=HTTP响应头
+    elif grep -Eiq '(^|[[:cntrl:]])x-iinfo:' <<< "$response"; then
+        provider=Imperva; evidence=HTTP响应头
     else
-        # fallback: getent + ipinfo（使用缩减后的纯 CDN 黑名单）
-        local first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
-        [[ -z "$first_ip" ]] && first_ip=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | head -1)
-        if [[ -n "$first_ip" ]]; then
-            local org=$(curl -s --max-time 5 "https://ipinfo.io/$first_ip/org" 2>/dev/null | tr -d '\n')
-            if [[ -n "$org" ]]; then
-                local cdn_name=$(echo "$org" | grep -ioE "$CDN_BLACKLIST_STRICT" | head -1)
-                if [[ -n "$cdn_name" ]]; then
-                    echo "CDN:$cdn_name|$org"
-                    return
-                fi
-            fi
-        fi
-        echo "CDN_OK"
+        cnames=$(grep -Eio '(^|[[:space:]])([a-z0-9_-]+\.)*(cloudfront\.net|fastly\.net|fastlylb\.net|cloudflare\.net|edgekey\.net|edgesuite\.net|akamaiedge\.net|incapdns\.net)\.?([[:space:]]|$)' <<< "$records" | tr '[:upper:]' '[:lower:]') || true
+        case "$cnames" in
+            *'cloudfront.net'*) provider=CloudFront ;;
+            *'fastly.net'*|*'fastlylb.net'*) provider=Fastly ;;
+            *'cloudflare.net'*) provider=Cloudflare ;;
+            *'edgekey.net'*|*'edgesuite.net'*|*'akamaiedge.net'*) provider=Akamai ;;
+            *'incapdns.net'*) provider=Imperva ;;
+        esac
+        [[ -z "$provider" ]] || evidence=DNS别名
+    fi
+    if [[ -n "$provider" ]]; then
+        printf 'CDN:%s|%s\n' "$provider" "$evidence"
         return
     fi
-
-    # 去重统计唯一 IP 数
-    local unique_count=$(echo "$all_ips" | sed '/^$/d' | sort -u | wc -l)
-    if [[ $unique_count -gt 1 ]]; then
-        local ip_list=$(echo "$all_ips" | sed '/^$/d' | sort -u | head -5 | tr '\n' ',' | sed 's/,$//')
-        echo "CDN:Anycast/GeoDNS|多 DNS 解析到 ${unique_count} 个不同 IP ($ip_list)"
+    ips=$(awk '{for(i=1;i<=NF;i++) if ($i ~ /^([0-9]+\.){3}[0-9]+$/ || ($i ~ /:/ && $i ~ /^[0-9a-fA-F:]+$/)) print $i}' <<< "$records")
+    if [[ -z "$ips" ]]; then
+        echo 'CDN_UNKNOWN|DNS未取得地址，无法判断'
     else
-        echo "CDN_OK"
+        echo 'CDN_UNCONFIRMED|未发现明确CDN线索；多地址不作为CDN证据'
     fi
 }
+
+_probe_sni_target() (
+    local domain="$1" prefix="$2" http2="$3" dns_pid result=TLS_FAIL response code=0
+    local -a options=()
+    [[ -z "$http2" ]] || options+=("$http2")
+    _cdn_dns_records "$domain" > "$prefix.dns" &
+    dns_pid=$!
+    trap 'kill "$dns_pid" 2>/dev/null || true' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # HEAD avoids downloading a page; ALPN and CDN headers share this one connection.
+    response=$(curl -s -v -I -m 3 --connect-timeout 2 "${options[@]}" -A "Mozilla/5.0" \
+        --dump-header - -o /dev/null -w '\nXRAY_HTTP_VERSION:%{http_version}\n' "https://$domain" 2>&1) || code=$?
+    if (( code == 0 )) && grep -q 'TLSv1.3' <<< "$response"; then
+        if grep -q '^XRAY_HTTP_VERSION:2\(\.0\)\?$' <<< "$response"; then result=TLS_OK
+        elif [[ -z "$http2" ]]; then result=TLS_H2_UNKNOWN
+        else result=TLS_H2_FAIL; fi
+    fi
+    wait "$dns_pid" || true
+    trap - EXIT
+    printf '%s|%s\n' "$result" "$(_detect_cdn "$domain" "$response" "$(cat "$prefix.dns")")"
+)
+
+_collect_sni_checks() (
+    local sni4="$1" sni6="$2" work http2="" family domain pid
+    local -a pids=()
+    work=$(mktemp -d) || return 1
+    trap 'for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; rm -rf "$work"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    if curl --version 2>/dev/null | grep -qE '^Features:.*HTTP2'; then http2=--http2; fi
+    for family in v4 v6; do
+        if [[ $family == v4 ]]; then domain="$sni4"; else domain="$sni6"; fi
+        [[ -n "$domain" ]] || continue
+        _probe_sni_target "$domain" "$work/$family" "$http2" > "$work/$family.result" &
+        pids+=("$!")
+    done
+    for pid in "${pids[@]}"; do wait "$pid" || true; done
+    pids=()
+    for family in v4 v6; do
+        [[ ! -f "$work/$family.result" ]] || printf '%s|%s\n' "$family" "$(cat "$work/$family.result")"
+    done
+)
 
 _check_ip_blocked() {
     if [[ $_ov_ip_blocked ]]; then
@@ -74,105 +132,49 @@ _check_ip_blocked() {
 }
 
 _check_sni_status() {
-    if [[ $_ov_sni_checked ]]; then
-        return
-    fi
-    _ov_sni_checked=1
-
-    _ov_v4_sni_status=""
-    _ov_v6_sni_status=""
-    _ov_v4_cdn_status=""
-    _ov_v6_cdn_status=""
-    _ov_sni_warning=""
-    _ov_cdn_warning=""
-
-    local v4_tmp="/tmp/.v4_sni_res_$$"
-    local v6_tmp="/tmp/.v6_sni_res_$$"
-
-    local pid_v4=""
-    local pid_v6=""
-
-    # 每个子 shell 同时检测 TLS 和 CDN，输出格式: TLS_OK|CDN_OK 或 TLS_FAIL|CDN:名称|归属
-    if [[ $_ov_v4_sni ]]; then
-        (
-            # ── TLS 检测 ──
-            tls_res="TLS_FAIL"
-            res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v4_sni" 2>&1)
-            if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                tls_res="TLS_OK"
-            fi
-            # ── CDN 检测（多 DNS 视角）──
-            cdn_res=$(_detect_cdn "$_ov_v4_sni")
-            echo "${tls_res}|${cdn_res}"
-        ) > "$v4_tmp" &
-        pid_v4=$!
-    fi
-
-    if [[ $_ov_v6_sni ]]; then
-        (
-            tls_res="TLS_FAIL"
-            res=$(curl -s -v -m 3 -A "Mozilla/5.0" -o /dev/null "https://$_ov_v6_sni" 2>&1)
-            if [[ $? == 0 ]] && echo "$res" | grep -qE "TLSv1.3"; then
-                tls_res="TLS_OK"
-            fi
-            # ── CDN 检测（多 DNS 视角）──
-            cdn_res=$(_detect_cdn "$_ov_v6_sni")
-            echo "${tls_res}|${cdn_res}"
-        ) > "$v6_tmp" &
-        pid_v6=$!
-    fi
-
-    [[ $pid_v4 ]] && wait $pid_v4
-    [[ $pid_v6 ]] && wait $pid_v6
-
-    # ── 解析 v4 结果 ──
-    if [[ $_ov_v4_sni && -f $v4_tmp ]]; then
-        local v4_raw=$(cat "$v4_tmp")
-        local v4_tls=${v4_raw%%|*}
-        local v4_cdn=${v4_raw#*|}
-        # TLS 状态
-        if [[ "$v4_tls" == "TLS_OK" ]]; then
-            _ov_v4_sni_status="${green}✓${none} "
-        else
-            _ov_v4_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v4 伪装域名 ($_ov_v4_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
-        fi
-        # CDN 状态
-        case "$v4_cdn" in
-        CDN:*)
-            local v4_cdn_name=$(echo "$v4_cdn" | cut -d: -f2 | cut -d'|' -f1)
-            local v4_cdn_org=$(echo "$v4_cdn" | cut -d'|' -f2)
-            _ov_v4_cdn_status="${red}CDN${none} "
-            _ov_cdn_warning+="  [警告] v4 域名 ($_ov_v4_sni) 挂了 CDN（$v4_cdn_name: $v4_cdn_org），请更换域名！\n"
-            ;;
+    local key="${_ov_v4_sni:-}|${_ov_v6_sni:-}" family tls cdn evidence domain label
+    [[ ${_ov_sni_checked:-} != "$key" ]] || return 0
+    _ov_sni_checked="$key"
+    _ov_v4_sni_status=""; _ov_v6_sni_status=""
+    _ov_v4_cdn_status=""; _ov_v6_cdn_status=""
+    _ov_sni_warning=""; _ov_cdn_warning=""
+    [[ -n ${_ov_v4_sni:-}${_ov_v6_sni:-} ]] || return 0
+    while IFS='|' read -r family tls cdn evidence; do
+        [[ $family == v4 || $family == v6 ]] || continue
+        if [[ $family == v4 ]]; then domain="$_ov_v4_sni"; else domain="$_ov_v6_sni"; fi
+        case "$tls" in
+            TLS_OK) label="${green}✓${none} " ;;
+            TLS_H2_UNKNOWN)
+                label="${yellow}TLS1.3 / h2未验证${none} "
+                _ov_sni_warning+="  [提示] $family 域名 ($domain) TLS 1.3 通过；本机 curl 未提供 HTTP/2，无法验证 h2。\n"
+                ;;
+            *)
+                label="${red}✗${none} "
+                _ov_sni_warning+="  [警告] $family 域名 ($domain) 证书、连通性、TLS 1.3 或 h2 检查未通过。\n"
+                ;;
         esac
-        rm -f "$v4_tmp"
-    fi
-
-    # ── 解析 v6 结果 ──
-    if [[ $_ov_v6_sni && -f $v6_tmp ]]; then
-        local v6_raw=$(cat "$v6_tmp")
-        local v6_tls=${v6_raw%%|*}
-        local v6_cdn=${v6_raw#*|}
-        # TLS 状态
-        if [[ "$v6_tls" == "TLS_OK" ]]; then
-            _ov_v6_sni_status="${green}✓${none} "
-        else
-            _ov_v6_sni_status="${red}✗${none} "
-            _ov_sni_warning+="  [警告] v6 伪装域名 ($_ov_v6_sni) 证书不受信、无法连通或不支持 TLS 1.3 / h2，强烈建议更换！\n"
-        fi
-        # CDN 状态
-        case "$v6_cdn" in
-        CDN:*)
-            local v6_cdn_name=$(echo "$v6_cdn" | cut -d: -f2 | cut -d'|' -f1)
-            local v6_cdn_org=$(echo "$v6_cdn" | cut -d'|' -f2)
-            _ov_v6_cdn_status="${red}CDN${none} "
-            _ov_cdn_warning+="  [警告] v6 域名 ($_ov_v6_sni) 挂了 CDN（$v6_cdn_name: $v6_cdn_org），请更换域名！\n"
-            ;;
+        printf -v "_ov_${family}_sni_status" '%s' "$label"
+        case "$cdn" in
+            CDN:*)
+                printf -v "_ov_${family}_cdn_status" '%s' "${yellow}疑似CDN${none} "
+                _ov_cdn_warning+="  [提示] $family 域名 ($domain) 存在 ${cdn#CDN:} CDN 线索 ($evidence)，请核对目标是否适用。\n"
+                ;;
+            CDN_UNKNOWN)
+                printf -v "_ov_${family}_cdn_status" '%s' "${yellow}CDN未知${none} "
+                _ov_cdn_warning+="  [提示] $family 域名 ($domain) 的 CDN 状态无法判断：$evidence。\n"
+                ;;
         esac
-        rm -f "$v6_tmp"
-    fi
+    done < <(_collect_sni_checks "${_ov_v4_sni:-}" "${_ov_v6_sni:-}")
+    for family in v4 v6; do
+        if [[ $family == v4 ]]; then domain="${_ov_v4_sni:-}"; label="$_ov_v4_sni_status"
+        else domain="${_ov_v6_sni:-}"; label="$_ov_v6_sni_status"; fi
+        if [[ -n "$domain" && -z "$label" ]]; then
+            printf -v "_ov_${family}_sni_status" '%s' "${yellow}检测未完成${none} "
+            _ov_sni_warning+="  [提示] $family 域名 ($domain) 检测未完成，请手动刷新。\n"
+        fi
+    done
 }
+
 
 follow_logs() (
     local pid

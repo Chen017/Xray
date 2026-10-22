@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# Client export restored from v2.5.4 (61744f3).
+# JSON string syntax is also a quoted YAML scalar, preserving IDs and aliases.
+yaml_string() { jq -cn --arg value "$1" '$value'; }
+
 info() {
     is_can_change=(0 1 2 3 4 5 6 7 8 9 10)
     if [[ ! $is_protocol ]]; then
@@ -20,23 +22,25 @@ info() {
         local landings_json=$(relay_get_landings)
         local count=$(jq -r 'length' <<< "$landings_json" 2>/dev/null || echo 0)
         if (( count > 0 )); then
-            local options="本机直出"
+            local -a options=("本机直出")
             local i l_name l_ip
             for (( i=0; i<count; i++ )); do
                 l_name=$(jq -r ".[$i].name // \"落地$((i+1))\"" <<< "$landings_json")
                 l_ip=$(jq -r ".[$i].landing_ip // \"\"" <<< "$landings_json")
                 if [[ "$l_name" == "默认落地" ]]; then
-                    options="$options 经落地(${l_ip})"
+                    options+=("经落地(${l_ip})")
                 else
-                    options="$options 经落地-${l_name}(${l_ip})"
+                    options+=("经落地-${l_name}(${l_ip})")
                 fi
             done
             echo
-            ask list is_outbound_choice "$options" "\n  请选择出口:"
+            is_tmp_list=("${options[@]}")
+            ask list is_outbound_choice null "\n  请选择出口:"
             [[ $REPLY == "0" ]] && return
             if (( REPLY > 1 )); then
                 local idx=$((REPLY - 2))
                 active_uuid=$(jq -r ".[$idx].client_uuid // empty" <<< "$landings_json")
+                [[ $(is_test uuid "$active_uuid") ]] || { _fail "所选落地机的客户端 UUID 无效，请重新绑定"; return 1; }
                 selected_landing_name=$(jq -r ".[$idx].name // \"落地$((idx+1))\"" <<< "$landings_json")
                 outbound_mode="landing"
             fi
@@ -55,7 +59,8 @@ info() {
     get_ipv6
     v6_ip=${ipv6:-""}
 
-    [[ -f $is_conf_dir/is_v6_uplink ]] && is_v6_uplink=1
+    local is_v6_uplink=""
+    [[ ! -f $is_conf_dir/is_v6_uplink ]] || is_v6_uplink=1
 
     if [[ $is_v6_uplink ]]; then
         uplink_ip=$v6_ip
@@ -130,7 +135,7 @@ info() {
 
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: $split_name
+- name: $(yaml_string "$split_name")
   type: vless
   server: "$uplink_ip"
   port: $port
@@ -148,7 +153,7 @@ info() {
     - h2
   reality-opts:
     public-key: $is_public_key
-    short-id: $uplink_sid
+    short-id: $(yaml_string "$uplink_sid")
   xhttp-opts:
     mode: stream-up
     host: $uplink_sni
@@ -179,7 +184,7 @@ info() {
       client-fingerprint: firefox
       reality-opts:
         public-key: $is_public_key
-        short-id: $downlink_sid
+        short-id: $(yaml_string "$downlink_sid")
       host: $downlink_sni
       path: $v4_path
       reuse-settings:
@@ -191,12 +196,13 @@ info() {
 EOF
         else
             # generate XHTTP Split VLESS link
-            local extra_split_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
+            local extra_split_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0},\"downloadSettings\":{\"address\":\"$downlink_ip\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"firefox\",\"serverName\":\"$downlink_sni\",\"publicKey\":\"$is_public_key\",\"shortId\":\"$downlink_sid\"},\"xhttpSettings\":{\"host\":\"$downlink_sni\",\"path\":\"$v4_path\",\"noGRPCHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"8-16\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"300-600\",\"hMaxReusableSecs\":\"2400-3600\",\"hKeepAlivePeriod\":0}}}}"
             local encoded_extra_split=$(printf '%s' "$extra_split_json" | jq -Rr @uri | tr -d '\n')
             local server_addr="$uplink_ip"
             [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
             local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_split="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#${split_tag}"
+            split_tag=$(printf "%s" "$split_tag" | jq -Rr @uri)
+            local vless_link_split="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${uplink_sni}&fp=chrome&pbk=${is_public_key}&sid=${uplink_sid}&alpn=h2&type=xhttp&host=${uplink_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_split}#${split_tag}"
 
             echo
             _step "VLESS 分享链接 (XHTTP 分离):"
@@ -216,7 +222,7 @@ EOF
 
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: $single_name
+- name: $(yaml_string "$single_name")
   type: vless
   server: "$single_ip"
   port: $port
@@ -234,7 +240,7 @@ EOF
     - h2
   reality-opts:
     public-key: $is_public_key
-    short-id: $single_sid
+    short-id: $(yaml_string "$single_sid")
   xhttp-opts:
     mode: stream-up
     host: $single_sni
@@ -258,12 +264,13 @@ EOF
 EOF
         else
             # generate XHTTP Single VLESS link
-            local extra_single_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"noSSEHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"scStreamUpServerSecs\":\"20-80\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0}}"
+            local extra_single_json="{\"uplinkHTTPMethod\":\"PUT\",\"noGRPCHeader\":true,\"xPaddingBytes\":\"100-1000\",\"xPaddingObfsMode\":true,\"xPaddingKey\":\"x_padding\",\"xPaddingHeader\":\"Referer\",\"xPaddingPlacement\":\"queryInHeader\",\"xPaddingMethod\":\"tokenish\",\"sessionPlacement\":\"path\",\"seqPlacement\":\"path\",\"xmux\":{\"maxConcurrency\":\"16-32\",\"cMaxReuseTimes\":0,\"hMaxRequestTimes\":\"600-900\",\"hMaxReusableSecs\":\"1800-3000\",\"hKeepAlivePeriod\":0}}"
             local encoded_extra_single=$(printf '%s' "$extra_single_json" | jq -Rr @uri | tr -d '\n')
             local server_addr="$single_ip"
             [[ "$server_addr" == *:* ]] && server_addr="[$server_addr]"
             local encoded_path=$(printf '%s' "$v4_path" | jq -Rr @uri | tr -d '\n')
-            local vless_link_single="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#${single_tag}"
+            single_tag=$(printf "%s" "$single_tag" | jq -Rr @uri)
+            local vless_link_single="vless://${active_uuid}@${server_addr}:${port}?encryption=none&security=reality&sni=${single_sni}&fp=chrome&pbk=${is_public_key}&sid=${single_sid}&alpn=h2&type=xhttp&host=${single_sni}&path=${encoded_path}&mode=stream-up&extra=${encoded_extra_single}#${single_tag}"
 
             echo
             _step "VLESS 分享链接 (XHTTP 单栈):"
@@ -283,7 +290,7 @@ EOF
 
         if [[ $is_output_format == "Mihomo配置" ]]; then
             cat <<EOF
-- name: $vision_name
+- name: $(yaml_string "$vision_name")
   type: vless
   server: "$vision_ip"
   port: $port
@@ -300,10 +307,11 @@ EOF
   client-fingerprint: chrome
   reality-opts:
     public-key: $is_public_key
-    short-id: $vision_sid
+    short-id: $(yaml_string "$vision_sid")
 EOF
         else
             # generate Vision Reality VLESS link
+            vision_tag=$(printf "%s" "$vision_tag" | jq -Rr @uri)
             local vless_link="vless://${active_uuid}@${vision_addr}:${port}?encryption=none&security=reality&flow=xtls-rprx-vision&type=tcp&sni=${vision_sni}&fp=chrome&pbk=${is_public_key}&sid=${vision_sid}#${vision_tag}"
 
             echo

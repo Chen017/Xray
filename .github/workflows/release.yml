@@ -18,7 +18,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq shellcheck unzip
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq shellcheck unzip
+          python -m pip install PyYAML
       - name: Bash syntax and ShellCheck errors
         run: |
           find . -name '*.sh' -not -path './.test-tools/*' -print0 | xargs -0 -n1 bash -n

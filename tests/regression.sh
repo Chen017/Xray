@@ -223,6 +223,7 @@ check open_port 443
 check test "$restarts" = "$(wc -l < "$TEST_STATE/service.commands")"
 pass 'manual firewall changes do not restart the proxy'
 . "$repo/tests/tcp_probe_checks.sh"
+. "$repo/tests/fix_checks.sh"
 . "$repo/tests/status_checks.sh"
 . "$repo/tests/entrypoint_checks.sh"
 
@@ -233,7 +234,7 @@ is_core_name=Xray
 is_core_ver=26.3.27
 is_sh_ver=$(sed -n 's/^is_sh_ver=\(v[0-9][0-9.]*\)$/\1/p' "$repo/xray.sh")
 _ov_ip_blocked="${green}✓${none} "
-_ov_sni_checked=1
+_ov_sni_checked='us.kjwing.com|example.org'
 is_main_menu <<< 0 > "$menu_output"
 for label in '[基础]' '[UUID]' '[ v4 ]' '[ v6 ]' '[高级]' '[状态]' 节点管理 运行控制 杂项 '查看客户端配置' '查看运行状态'; do
     check grep -Fq "$label" "$menu_output"

@@ -157,7 +157,7 @@ relay_apply_line() {
     local updated_failover
     updated_failover=$(jq --arg nid "$next_id" '
         if .order and (.order | length > 0) then
-            .order = ((.order + [$nid]) | unique)
+            .order = (.order | if index($nid) then . else . + [$nid] end)
         else
             .
         end
