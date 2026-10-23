@@ -62,3 +62,9 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 
 ### 管理菜单
 安装完成后，可在终端执行 `xray` 命令进入交互式主菜单。保留节点管理、运行控制、杂项的原有菜单排布。亦支持执行 `xray --update` 命令行自动更新脚本。
+
+## Panel Agent 管理
+
+v2.7.10 增加「杂项管理 → Panel Agent 管理」，进入前检测旧版与新版 Agent 配置、服务和程序。已有接入信息会保留；不会为了接入 Panel 重装或迁移 Xray。也可直接运行 `xray agent install|update|uninstall|status|logs`。
+
+不使用本脚本也能独立一键安装 Agent：在 [Xray Panel](https://github.com/Chen017/Xray-Panel) 添加节点，复制专属安装脚本到目标 VPS 执行；或安装统一 `xray-panel` 管理器后粘贴一段接入信息。新入口依赖 Panel v1.1.0 Release 发布完成。Agent 卸载默认保留凭据和状态，始终保留 Xray。
