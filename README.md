@@ -40,6 +40,7 @@
   - 防火墙双栈端口管理（放行/关闭）、核心及脚本的在线升级（无 iptables 权限环境自动优雅降级，不阻断运行）。
   - 配置先校验再应用，失败自动回滚；更新校验下载内容并保留上一版本，内容未变化时不重启。脚本更新保留额外的用户文件与外部补丁模块。
   - geodata 每日通过 systemd 定时更新，校验失败保留旧数据；日志自动轮转，退出时清理临时文件与跟踪进程。
+- 集中管理（可选）：通过 [Xray Panel](https://github.com/Chen017/Xray-Panel) 管理多台 VPS、下发配置并生成按设备授权的 age 加密 Mihomo 订阅；支持 Telegram 的 SNI 检查与国内 / 境外测点对照告警。
 
 ## ⚙️ 兼容性
 
@@ -65,6 +66,20 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 
 ## Panel Agent 管理
 
-v2.7.10 增加「杂项管理 → Panel Agent 管理」，进入前检测旧版与新版 Agent 配置、服务和程序。已有接入信息会保留；不会为了接入 Panel 重装或迁移 Xray。也可直接运行 `xray agent install|update|uninstall|status|logs`。
+v2.7.10 起，可从「杂项管理 → 集中管理 / Panel Agent」接入 [Xray Panel](https://github.com/Chen017/Xray-Panel)。进入前会检查本地新旧 Agent 配置、服务与程序，保留已有身份和凭据；接入本身只导入配置，不重装或部署 Xray。
 
-不使用本脚本也能独立一键安装 Agent：在 [Xray Panel](https://github.com/Chen017/Xray-Panel) 添加节点，复制专属安装脚本到目标 VPS 执行；或安装统一 `xray-panel` 管理器后粘贴一段接入信息。新入口依赖 Panel v1.1.0 Release 发布完成。Agent 卸载默认保留凭据和状态，始终保留 Xray。
+先在建站 VPS [部署 Panel](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/1panel.md)，再在面板添加节点，复制接入信息到目标 VPS。也可直接运行：
+
+```bash
+xray agent install
+xray agent update
+xray agent status
+xray agent logs
+xray agent uninstall
+```
+
+**独立一键安装仍然保留**：不使用本脚本时，直接在面板复制该节点的完整安装脚本执行；已有 `xray-panel` 管理器也可使用 `xray-panel agent install`。推荐使用 Panel / Agent v1.3.0 或更新正式版；更新 Panel 不会自动更新各 VPS 的 Agent。
+
+Agent 卸载默认保留凭据与状态，保留 Xray。面板保存草稿不修改 VPS；点击部署或创建设备授权后才会产生配置任务，设备订阅需等 UUID 部署成功。通过 Script 改动过配置后，先在面板导入当前配置，避免覆盖外部变化。
+
+后续教程：[Cloudflare / Zero Trust](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/cloudflare.md) · [Mihomo 订阅](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/mihomo.md) · [Telegram 告警](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/telegram.md)。
