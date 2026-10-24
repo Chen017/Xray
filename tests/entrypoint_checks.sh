@@ -29,6 +29,10 @@ wget() { echo 'ip=203.0.113.10'; }
 getent() { if [[ $1 == ahostsv6 ]]; then echo '2001:db8::1 STREAM'; else echo '203.0.113.1 STREAM'; fi; }
 timeout() {
     shift
+    if [[ $1 == ping ]]; then
+        echo ping >> "$TEST_STATE/entry-global.calls"
+        return 0
+    fi
     if [[ $1 == bash && $2 == -c && $3 == *'/dev/tcp/'* ]]; then
         echo tcp >> "$TEST_STATE/entry-tcp.calls"
         return 0
@@ -47,8 +51,10 @@ ENV
         check env BASH_ENV="$entry_root/environment.sh" bash "$entry_root/xray.sh" \
             <<< $'2\n1\n2\n\n0' > "$scratch/entrypoint-$launch.txt"
         check grep -q '^vless://' "$scratch/entrypoint-$launch.txt"
-        check grep -q 'GFW放行: .*✓' "$scratch/entrypoint-$launch.txt"
+        check grep -q '国内连通: .*✓' "$scratch/entrypoint-$launch.txt"
+        check grep -q 'Cloudflare: .*✓' "$scratch/entrypoint-$launch.txt"
         check test "$(wc -l < "$TEST_STATE/entry-tcp.calls")" = "$launch"
+        check test "$(wc -l < "$TEST_STATE/entry-global.calls")" = "$launch"
         check test "$(wc -l < "$TEST_STATE/entry-curl.calls")" = "$((launch*2))"
     done
 ) || exit 1

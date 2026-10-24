@@ -223,6 +223,7 @@ check open_port 443
 check test "$restarts" = "$(wc -l < "$TEST_STATE/service.commands")"
 pass 'manual firewall changes do not restart the proxy'
 . "$repo/tests/tcp_probe_checks.sh"
+bash "$repo/tests/network_probe_checks.sh"
 . "$repo/tests/fix_checks.sh"
 . "$repo/tests/status_checks.sh"
 . "$repo/tests/entrypoint_checks.sh"

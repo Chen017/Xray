@@ -19,7 +19,7 @@
 - 自动加速优化：内核支持时启用 BBR；TFO 与 MPTCP 的效果取决于内核、网络和客户端。支持选择真正的 Happy Eyeballs 双栈 TCP 连接竞速（需 Xray v25.6.8+）；`UseIPv4v6` 仅表示解析优先，不等于连接失败回退。
 - 双栈入口隔离：IPv4 绑定本机路由源地址，IPv6 设置 IPv6-only，避免两个同端口通配监听器争抢连接、进入错误的 REALITY SNI；已有脚本配置自动事务迁移。[实测与修复记录](docs/xhttp-delay-investigation-2026-10-17.md)。
 - 安全探针：
-  - 每次打开脚本连接国内测试节点的 TCP 80 端口，检查 IPv4/IPv6 出站连通性；结果不能证明国内客户端到本机是否被阻断。
+  - 每次打开脚本连接上海移动、联通、电信目标的 TCP 80 端口，任意一个成功即国内可达；并行 ping Cloudflare `1.1.1.1` / `1.0.0.1`，ICMP 不通时尝试 TCP 443。区分国内异常、境外异常和国内外均不可达；结果不能证明国内客户端到本机是否被阻断。只读 JSON 检测入口：`bash /usr/local/etc/xray/sh/src/network_probe.sh --json`。
   - SNI 快速自检：一次 HTTPS HEAD 请求同时检查证书、TLS 1.3 与实际协商的 h2，单请求最多 3 秒；两个目标和 DNS 查询并行执行，返回菜单复用结果，域名变化自动刷新。本机 curl 不支持 HTTP/2 时明确提示 h2 未验证。
   - CDN 线索：复用该请求的 CDN 响应头，并检查 DNS 别名中的已知 CDN 域名；不额外串行查询 ASN API。DNS 查询失败报告无法判断，多地址解析不直接认定 CDN；未发现线索也不代表已证明目标无 CDN。
 - 安全策略与分流：使用独立防火墙链，保留系统与其他应用规则；屏蔽 BitTorrent (BT) 下载、阻断回国流量与 Private IP 段。支持自定义分流规则管理（支持在阻断回国流量之前插入自定义规则，如放行 `geosite:cn` 内部的 `DOMAIN-SUFFIX,kimi.ai`）。
@@ -40,7 +40,7 @@
   - 防火墙双栈端口管理（放行/关闭）、核心及脚本的在线升级（无 iptables 权限环境自动优雅降级，不阻断运行）。
   - 配置先校验再应用，失败自动回滚；更新校验下载内容并保留上一版本，内容未变化时不重启。脚本更新保留额外的用户文件与外部补丁模块。
   - geodata 每日通过 systemd 定时更新，校验失败保留旧数据；日志自动轮转，退出时清理临时文件与跟踪进程。
-- 集中管理（可选）：通过 [Xray Panel](https://github.com/Chen017/Xray-Panel) 管理多台 VPS、下发配置并生成按设备授权的 age 加密 Mihomo 订阅；支持 Telegram 的 SNI 检查与国内 / 境外测点对照告警。
+- 集中管理（可选）：通过 [Xray Panel](https://github.com/Chen017/Xray-Panel) 管理多台 VPS、下发配置并生成按设备授权的 age 加密 Mihomo 订阅；Panel / Agent v1.3.2 起复用本脚本的国内 / Cloudflare 自检，支持连续失败、恢复与 SNI 的 Telegram 告警，无需额外测点。
 
 ## ⚙️ 兼容性
 
@@ -68,6 +68,8 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 
 v2.7.10 起，可从「杂项管理 → 集中管理 / Panel Agent」接入 [Xray Panel](https://github.com/Chen017/Xray-Panel)。进入前会检查本地新旧 Agent 配置、服务与程序，保留已有身份和凭据；接入本身只导入配置，不重装或部署 Xray。
 
+v2.7.11 的子菜单按本机服务状态显示：已安装时提供状态、更新 / 修复、日志、卸载，不再显示安装；未安装服务时才提供接入。每次操作后按 Enter 返回，卸载默认保留 Xray 与接入凭据。
+
 先在建站 VPS [部署 Panel](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/1panel.md)，再在面板添加节点，复制接入信息到目标 VPS。也可直接运行：
 
 ```bash
@@ -78,7 +80,7 @@ xray agent logs
 xray agent uninstall
 ```
 
-**独立一键安装仍然保留**：不使用本脚本时，直接在面板复制该节点的完整安装脚本执行；已有 `xray-panel` 管理器也可使用 `xray-panel agent install`。推荐使用 Panel / Agent v1.3.0 或更新正式版；更新 Panel 不会自动更新各 VPS 的 Agent。
+**独立一键安装仍然保留**：不使用本脚本时，直接在面板复制该节点的完整安装脚本执行；已有 `xray-panel` 管理器也可使用 `xray-panel agent install`。推荐使用 Panel / Agent v1.3.2 或更新正式版；更新 Panel 不会自动更新各 VPS 的 Agent。
 
 Agent 卸载默认保留凭据与状态，保留 Xray。面板保存草稿不修改 VPS；点击部署或创建设备授权后才会产生配置任务，设备订阅需等 UUID 部署成功。通过 Script 改动过配置后，先在面板导入当前配置，避免覆盖外部变化。
 

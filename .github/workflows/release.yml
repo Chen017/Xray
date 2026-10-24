@@ -31,6 +31,8 @@ jobs:
         run: python tests/fetch_tools.py
       - name: Check runtime refresh and version policy
         run: python -m unittest discover -s tests -p 'fetch_tools_checks.py'
+      - name: Check Agent entry and interactive menu
+        run: python -m unittest discover -s tests -p 'panel_agent_checks.py'
       - name: Isolated regression against Xray 26.3.27 and latest stable Mihomo
         run: |
           cat .test-tools/runtimes.json
