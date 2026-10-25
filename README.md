@@ -49,10 +49,6 @@
 - Xray 版本：固定使用 [XTLS/Xray-core v26.3.27](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27)，安装、重装和核心更新均遵循该版本；脚本与 geodata 可独立更新。
 - Mihomo 客户端：跟随最新正式 Release；测试记录具体核心版本。仅在 Mihomo 明确支持其它 Xray 版本后重新评估服务端升级。
 
-v2.7.9 修复 Short ID 字符串导出、含空格备注、分离方向切换、无来源限制的落地端口放行及故障转移顺序，并清理 VLESS 链接中的服务端专用字段。VLESS 链接的 Xray 下行独立参数仍保留，不能直接按 Mihomo 的字段限制删除。
-
-v2.7.8 的版本策略与监听修复实测见 [验证记录](docs/newnb-validation-2026-10-17.md)。其中提供临时配置 A/B 工具，自动保留并恢复日常订阅的选择组，避免手工粘贴 YAML。
-
 ## ⚡ 快速开始
 
 ### 安装命令
@@ -67,10 +63,6 @@ bash <(wget -qO- -o- https://github.com/Chen017/Xray/raw/main/install.sh)
 ## Panel Agent 管理
 
 v2.7.10 起，可从「杂项管理 → 集中管理 / Panel Agent」接入 [Xray Panel](https://github.com/Chen017/Xray-Panel)。进入前会检查本地新旧 Agent 配置、服务与程序，保留已有身份和凭据；接入本身只导入配置，不重装或部署 Xray。
-
-v2.7.11 的子菜单按本机服务状态显示：已安装时提供状态、更新 / 修复、日志、卸载，不再显示安装；未安装服务时才提供接入。每次操作后按 Enter 返回，卸载默认保留 Xray 与接入凭据。
-
-v2.7.12 修复首次接入时因固定旧版 Panel Release 已被清理而出现的 404：未安装管理器时先查询最新正式 Release，再下载对应版本的引导脚本；下载或安装失败时显示具体阶段。已有管理器仍直接复用，接入流程不部署 Xray。
 
 先在建站 VPS [部署 Panel](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/1panel.md)，再在面板添加节点，复制接入信息到目标 VPS。也可直接运行：
 
