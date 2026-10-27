@@ -82,14 +82,39 @@ if [[ $(uname -s) == Linux ]]; then
 fi
 
 node_file="$is_conf_dir/VLESS-REALITY-443.json"
-protected=$(jq -c '.inbounds | map(del(.listen, .streamSettings.sockopt.v6only))' "$node_file")
+protected=$(jq -c '.inbounds | map(del(.tag, .listen, .settings.fallbacks, .streamSettings.sockopt.v6only))' "$node_file")
 legacy=$(jq '(.inbounds[] | select(.tag=="public_443_v4")).listen="0.0.0.0" | (.inbounds[] | select(.tag=="public_443_v6")).streamSettings.sockopt |= del(.v6only)' "$node_file")
 printf '%s\n' "$legacy" > "$node_file"
 printf '%s\n' 1 > "$is_core_dir/.schema-version"
 check migrate_installation
-check test "$protected" = "$(jq -c '.inbounds | map(del(.listen, .streamSettings.sockopt.v6only))' "$node_file")"
+check test "$protected" = "$(jq -c '.inbounds | map(del(.tag, .listen, .settings.fallbacks, .streamSettings.sockopt.v6only))' "$node_file")"
 check jq -e 'any(.inbounds[]; .tag=="public_443_v4" and .listen=="203.0.113.10") and any(.inbounds[]; .tag=="public_443_v6" and .streamSettings.sockopt.v6only==true)' "$node_file"
 pass 'listener migration separates families and preserves all REALITY, XMUX and performance fields'
+
+# A failure after the IPv4 swap must restore the real chains in both families.
+test_change_port() {
+    local json
+    json=$(jq '(.inbounds[] | select(.streamSettings.security=="reality")).port=8443' "$is_conf_dir/VLESS-REALITY-443.json") || return 1
+    atomic_json "$is_conf_dir/VLESS-REALITY-443.json" "$json"
+}
+touch "$TEST_STATE/fail-v6-swap"
+if config_transaction test_change_port; then echo 'FAIL: partial firewall failure accepted'; exit 1; fi
+check jq -e '.inbounds[0].port==443' "$is_conf_dir/VLESS-REALITY-443.json"
+for family in v4 v6; do
+    check jq -e '. as $s | $s[$s["XRAY-SCRIPT"][0][-1]] as $rules |
+        any($rules[]; index("443")!=null and .[-1]=="ACCEPT") and
+        all($rules[]; index("8443")==null)' "$TEST_STATE/$family.json"
+done
+pass 'partial IPv6 commit failure restores IPv4 and IPv6 rules despite the old signature'
+active_chain=$(jq -r '.["XRAY-SCRIPT"][0][-1]' "$TEST_STATE/v4.json")
+iptables -w 5 -F "$active_chain"
+iptables -w 5 -A "$active_chain" -p tcp --dport 8443 -j ACCEPT
+printf '2\n' > "$is_core_dir/.schema-version"
+check migrate_installation
+check jq -e '. as $s | $s[$s["XRAY-SCRIPT"][0][-1]] as $rules |
+    any($rules[]; index("443")!=null and .[-1]=="ACCEPT") and
+    all($rules[]; index("8443")==null)' "$TEST_STATE/v4.json"
+pass 'schema upgrade repairs a stale firewall chain left by a previous release'
 
 original=$(configuration_content "$is_core_dir")
 check config_transaction set_outbound_strategy UseIPv6
@@ -139,7 +164,7 @@ check config_transaction relay_apply_landing "$transport_uuid" "$vlessenc_decryp
 check python -c 'import json,os; from pathlib import Path; s=json.loads((Path(os.environ["TEST_STATE"])/"v4.json").read_text()); c=s["XRAY-SCRIPT"][0][-1]; rules=s[c]; assert rules[0]==["-p","tcp","-s","203.0.113.20/32","--dport","30001","-j","ACCEPT"]; assert rules[1]==["-p","tcp","--dport","30001","-j","DROP"]; assert s["FORWARD"]==[["-j","EXISTING-FORWARD"]]; assert s["OTHER-APP"]==[["-j","RETURN"]]; assert ["-p","tcp","--dport","22","-j","ACCEPT"] in s["INPUT"]'
 check config_transaction relay_apply_remove landing
 check config_transaction relay_apply_line 203.0.113.20 30001 "$transport_uuid" "$vlessenc_encryption" "$("$is_core_bin" uuid)"
-check jq -e '.routing.rules[0].outboundTag=="relay-out"' "$is_config_json"
+check jq -e '.routing.rules[0].ip==["geoip:private"] and .routing.rules[1].outboundTag=="relay-out"' "$is_config_json"
 check jq -e '.outbounds[] | select(.tag == "relay-out" and .settings.address == "203.0.113.20")' "$is_config_json"
 
 # Domain validation and link parsing tests
@@ -225,6 +250,7 @@ pass 'manual firewall changes do not restart the proxy'
 . "$repo/tests/tcp_probe_checks.sh"
 bash "$repo/tests/network_probe_checks.sh"
 . "$repo/tests/fix_checks.sh"
+. "$repo/tests/audit_checks.sh"
 . "$repo/tests/status_checks.sh"
 . "$repo/tests/entrypoint_checks.sh"
 

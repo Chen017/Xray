@@ -17,6 +17,10 @@ with (root / 'firewall.commands').open('a') as output:
 op, *rest = args
 chain = rest[0] if rest else None
 rule = rest[1:]
+failure = root / 'fail-v6-swap'
+if family == 'v6' and chain == 'XRAY-SCRIPT' and op in ['-R', '-A'] and failure.exists():
+    failure.unlink()
+    sys.exit(1)
 code = 0
 if op == '-N':
     if chain in state: code = 1
