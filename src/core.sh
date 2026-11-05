@@ -902,6 +902,9 @@ relay_parse_link() {
         fi
         parsed_entry_encryption="${p_entry_enc%%=*}"
     fi
+    if (( has_entry_port )) && { (( ! has_entry_uuid || ! has_entry_enc )); }; then
+        return 1
+    fi
 
     parsed_transport_uuid="$t_uuid"
     parsed_landing_ip="$l_ip"

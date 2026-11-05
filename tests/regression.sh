@@ -164,11 +164,22 @@ check config_transaction relay_apply_landing "$transport_uuid" "$vlessenc_decryp
 check python -c 'import json,os; from pathlib import Path; s=json.loads((Path(os.environ["TEST_STATE"])/"v4.json").read_text()); c=s["XRAY-SCRIPT"][0][-1]; rules=s[c]; assert rules[0]==["-p","tcp","-s","203.0.113.20/32","--dport","30001","-j","ACCEPT"]; assert rules[1]==["-p","tcp","--dport","30001","-j","DROP"]; assert s["FORWARD"]==[["-j","EXISTING-FORWARD"]]; assert s["OTHER-APP"]==[["-j","RETURN"]]; assert ["-p","tcp","--dport","22","-j","ACCEPT"] in s["INPUT"]'
 # Test landing NAT v4 Plan 1 (VLESS Encryption random + 1-RTT Padding) entry alongside original relay-in interconnection
 check relay_generate_vlessenc_entry random
+check grep -q '^mlkem768x25519plus.random.0rtt.' <<< "$entry_vlessenc_encryption"
 entry_test_uuid=$("$is_core_bin" uuid)
 check config_transaction relay_apply_landing "$transport_uuid" "$vlessenc_decryption" 30001 "$vlessenc_encryption" 203.0.113.10 203.0.113.20 30001 30002 40002 "$entry_test_uuid" "$entry_vlessenc_decryption" "$entry_vlessenc_encryption"
 check jq -e '.inbounds | length == 2 and .[0].tag == "relay-in" and .[0].port == 30001 and .[1].tag == "relay-entry-v4" and .[1].port == 30002 and .[1].protocol == "vless" and .[1].settings.clients[0].id == "'"$entry_test_uuid"'" and (.[1].settings.clients[0].flow | not) and (.[1].settings.decryption | startswith("mlkem768x25519plus.random.600s.100-111-1111.75-0-111.50-0-3333.")) and .[1].streamSettings.network == "raw" and .[1].streamSettings.security == "none" and .[1].sniffing.routeOnly == true' "$is_conf_dir/99_relay_in.json"
 check python -c 'import json,os; from pathlib import Path; s=json.loads((Path(os.environ["TEST_STATE"])/"v4.json").read_text()); c=s["XRAY-SCRIPT"][0][-1]; rules=s[c]; assert rules[0]==["-p","tcp","-s","203.0.113.20/32","--dport","30001","-j","ACCEPT"]; assert rules[1]==["-p","tcp","--dport","30001","-j","DROP"]; assert rules[2]==["-p","tcp","--dport","30002","-j","ACCEPT"]'
 if close_port 30002; then echo "FAIL: managed entry_listen_port allowed manual close"; exit 1; fi
+entry_file="$is_conf_dir/99_relay_in.json"
+atomic_json "$entry_file" "$(jq '(.inbounds[] | select(.tag=="relay-entry-v4") | .settings.clients[]) += {flow:"xtls-rprx-vision"}' "$entry_file")"
+printf '3\n' > "$is_core_dir/.schema-version"
+check migrate_installation
+check test "$(cat "$is_core_dir/.schema-version")" = 4
+check jq -e 'all(.inbounds[] | select(.tag=="relay-entry-v4") | .settings.clients[]; has("flow")|not) and any(.inbounds[] | select(.tag=="relay-in") | .settings.clients[]; .flow=="xtls-rprx-vision")' "$entry_file"
+entry_after=$(cat "$entry_file")
+check migrate_installation
+check test "$(cat "$entry_file")" = "$entry_after"
+pass 'schema 3 public entry loses stale Vision flow, preserves inter-server Vision and migrates idempotently'
 check config_transaction relay_apply_remove landing
 check config_transaction relay_apply_line 203.0.113.20 30001 "$transport_uuid" "$vlessenc_encryption" "$("$is_core_bin" uuid)"
 check jq -e '.routing.rules[0].ip==["geoip:private"] and .routing.rules[1].outboundTag=="relay-out"' "$is_config_json"

@@ -247,11 +247,14 @@ EOF
                     check grep -q 'dialer-proxy:' "$scratch_cross/$mode.yaml"
                 fi
             else
-                grep '^vless://' "$scratch_cross/$mode-interactive.txt" > "$scratch_cross/$mode.link"
                 if [[ $mode == split || $mode == single ]]; then
-                    check grep -q '^vless://55555555-5555-4555-8555-555555555555@203.0.113.10:443?' "$scratch_cross/$mode.link"
+                    check grep -q '单条 VLESS 链接无法保存 NAT 串联' "$scratch_cross/$mode-interactive.txt"
+                    if grep -q '^vless://' "$scratch_cross/$mode-interactive.txt"; then echo 'FAIL: incomplete chained URI exported'; exit 1; fi
+                    : > "$scratch_cross/$mode.link"
+                else
+                    grep '^vless://' "$scratch_cross/$mode-interactive.txt" > "$scratch_cross/$mode.link"
+                    check grep -q '^vless://66666666-6666-4666-8666-666666666666@203.0.113.50:40008?encryption=mlkem768x25519plus.random.0rtt.' "$scratch_cross/$mode.link"
                 fi
-                check grep -q '^vless://66666666-6666-4666-8666-666666666666@203.0.113.50:40008?encryption=mlkem768x25519plus.random.0rtt.' "$scratch_cross/$mode.link" 
             fi
         done
     done
@@ -267,4 +270,4 @@ EOF
     check grep -q '^vless://55555555-5555-4555-8555-555555555555@203.0.113.10:443?' "$scratch_cross/local-v4-link.txt"
     rm -f "$is_relay_state_file"
 ) || exit 1
-pass 'restored exports cover all three modes, both formats, Scheme 1 VLESS Encryption NAT v4 split, IPv6, multi-landing and pure landing'
+pass 'exports cover all modes and supported formats, NAT split, IPv6 and landings; incomplete chained URIs are rejected'

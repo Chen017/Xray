@@ -12,6 +12,19 @@ def native(path):
 xray = native(os.environ['XRAY_TEST_BIN'])
 for mode in ['single', 'split', 'vision']:
     link_lines = [l.strip() for l in (directory / (mode + '.link')).read_text().splitlines() if l.strip().startswith('vless://')]
+    if not link_lines and mode in ('single','split'):
+        fragment=(directory/(mode+'.yaml')).read_text()
+        proxies=yaml.safe_load(fragment)
+        assert len(proxies)==2 and proxies[0]['network']=='xhttp',proxies
+        assert proxies[0]['dialer-proxy']==proxies[1]['name']
+        assert proxies[1]['tfo'] is False and 'flow' not in proxies[1]
+        if mode=='split':assert proxies[0]['xhttp-opts']['download-settings']['dialer-proxy']==''
+        if os.environ.get('MIHOMO_TEST_BIN'):
+            config=directory/(mode+'-mihomo.yaml')
+            config.write_text('proxies:\n'+''.join('  '+line+'\n' for line in fragment.splitlines())+'\nrules: ["MATCH,DIRECT"]\n')
+            result=subprocess.run([native(os.environ['MIHOMO_TEST_BIN']),'-t','-d',str(directory),'-f',str(config)],capture_output=True)
+            assert result.returncode==0,result.stdout.decode(errors='replace')+result.stderr.decode(errors='replace')
+        continue
     assert link_lines, f'no vless link in {mode}.link'
     link = urlsplit(link_lines[0])
     query = parse_qs(link.query, keep_blank_values=True)
