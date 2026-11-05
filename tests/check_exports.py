@@ -17,8 +17,11 @@ for mode in ['single', 'split', 'vision']:
     query = parse_qs(link.query, keep_blank_values=True)
     sec = query['security'][0]
     if sec == 'none':
+        user = {'id': link.username, 'encryption': query['encryption'][0]}
+        if 'flow' in query:
+            user['flow'] = query['flow'][0]
         outbound = {'protocol': 'vless', 'settings': {'vnext': [{'address': link.hostname, 'port': link.port,
-            'users': [{'id': link.username, 'encryption': query['encryption'][0], 'flow': query['flow'][0]}]}]},
+            'users': [user]}]},
             'streamSettings': {'network': 'raw', 'security': 'none'}}
     else:
         outbound = {'protocol': 'vless', 'settings': {'vnext': [{'address':link.hostname, 'port':link.port,
@@ -53,7 +56,10 @@ for mode in ['single', 'split', 'vision']:
         if sec == 'none':
             assert parsed['tls'] is False
             assert parsed['encryption'] == query['encryption'][0]
-            assert parsed['flow'] == query['flow'][0]
+            if 'flow' in query:
+                assert parsed.get('flow') == query['flow'][0]
+            else:
+                assert 'flow' not in parsed
             assert parsed['port'] == link.port
         else:
             assert parsed['reality-opts']['short-id'] == query['sid'][0]

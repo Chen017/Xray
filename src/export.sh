@@ -37,11 +37,10 @@ export_landing_vlessenc() {
   tfo: true
   mptcp: true
   packet-encoding: xudp
-  flow: xtls-rprx-vision
   encryption: $(yaml_string "$eenc")
 EOF
     else
-        local vless_link="vless://${euuid}@${lip}:${eext}?encryption=${eenc}&security=none&flow=xtls-rprx-vision&type=tcp#${node_tag}"
+        local vless_link="vless://${euuid}@${lip}:${eext}?encryption=${eenc}&security=none&type=tcp#${node_tag}"
         echo
         _step "VLESS 分享链接 (NAT v4 方案一 VLESS Encryption 过墙):"
         echo
@@ -291,7 +290,6 @@ ${split_top_dialer}  reality-opts:
   tfo: true
   mptcp: true
   packet-encoding: xudp
-  flow: xtls-rprx-vision
   encryption: $(yaml_string "$selected_entry_enc")
 EOF
             else
@@ -372,7 +370,7 @@ EOF
             printf '%s\n' "$vless_link_split"
             if (( has_nat_v4_plan1 )); then
                 local nat_tag=$(printf "%s" "$nat_guard_name" | jq -Rr @uri)
-                local nat_vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&flow=xtls-rprx-vision&type=tcp#${nat_tag}"
+                local nat_vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&type=tcp#${nat_tag}"
                 echo
                 _step "NAT v4 方案一过墙分享链接 (VLESS Encryption):"
                 echo
@@ -442,7 +440,6 @@ EOF
   tfo: true
   mptcp: true
   packet-encoding: xudp
-  flow: xtls-rprx-vision
   encryption: $(yaml_string "$selected_entry_enc")
 EOF
             else
@@ -504,7 +501,7 @@ EOF
             printf '%s\n' "$vless_link_single"
             if (( has_nat_v4_plan1 && is_v4_choice )); then
                 local nat_tag=$(printf "%s" "$nat_guard_name" | jq -Rr @uri)
-                local nat_vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&flow=xtls-rprx-vision&type=tcp#${nat_tag}"
+                local nat_vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&type=tcp#${nat_tag}"
                 echo
                 _step "NAT v4 方案一过墙分享链接 (VLESS Encryption):"
                 echo
@@ -535,12 +532,11 @@ EOF
   tfo: true
   mptcp: true
   packet-encoding: xudp
-  flow: xtls-rprx-vision
   encryption: $(yaml_string "$selected_entry_enc")
 EOF
             else
                 local nat_tag=$(printf "%s" "$vision_tag" | jq -Rr @uri)
-                local vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&flow=xtls-rprx-vision&type=tcp#${nat_tag}"
+                local vless_link="vless://${selected_entry_uuid}@${v4_entry_ip}:${v4_entry_port}?encryption=${selected_entry_enc}&security=none&type=tcp#${nat_tag}"
                 echo
                 _step "VLESS 分享链接 (NAT v4 方案一 VLESS Encryption 过墙):"
                 echo

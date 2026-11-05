@@ -174,7 +174,7 @@ EOF
         change <<< $'3\n28889\n38889\n\n0\n' > "$scratch_landing/change-entry-on.txt" || true
         check jq -e '.entry_listen_port == 28889 and .entry_external_port == 38889 and (.entry_uuid | length > 0) and (.entry_encryption | startswith("mlkem768x25519plus.random."))' "$is_relay_state_file"
         check jq -e '.inbounds[1].tag == "relay-entry-v4" and .inbounds[1].port == 28889 and .inbounds[1].protocol == "vless" and .inbounds[1].streamSettings.network == "raw"' "$scratch_landing/conf/99_relay_in.json"
-        check jq -e '.inbounds[1].settings.clients[0].flow == "xtls-rprx-vision" and (.inbounds[1].settings.decryption | startswith("mlkem768x25519plus.random.600s."))' "$scratch_landing/conf/99_relay_in.json"
+        check jq -e '(.inbounds[1].settings.clients[0].flow | not) and (.inbounds[1].settings.decryption | startswith("mlkem768x25519plus.random.600s."))' "$scratch_landing/conf/99_relay_in.json"
         info_out_entry=$(relay_view_info_landing)
         check grep -q '&entry_port=38889&entry_uuid=' <<< "$info_out_entry"
 

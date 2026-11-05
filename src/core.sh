@@ -1107,7 +1107,6 @@ relay_create_landing_inbound() {
                       clients: [
                         {
                           id: $euuid,
-                          flow: "xtls-rprx-vision",
                           email: "relay-entry-v4"
                         }
                       ],
