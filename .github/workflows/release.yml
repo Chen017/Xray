@@ -9,61 +9,120 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: xray-script-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
       - name: Install test dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y jq shellcheck unzip
-          python -m pip install PyYAML
+          missing=()
+          for tool in jq shellcheck unzip; do
+            command -v "$tool" >/dev/null || missing+=("$tool")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+          python -m pip install -r tests/requirements.txt
       - name: Bash syntax and ShellCheck errors
         run: |
-          find . -name '*.sh' -not -path './.test-tools/*' -print0 | xargs -0 -n1 bash -n
-          find . -name '*.sh' -not -path './.test-tools/*' -print0 | xargs -0 shellcheck -S error
+          git ls-files -z -- '*.sh' | xargs -0 -n1 bash -n
+          git ls-files -z -- '*.sh' | xargs -0 shellcheck -S error
+      - name: Check runtime policy and Agent entry
+        run: python -m unittest discover -s tests -p '*_checks.py'
+      - name: Package tracked release files
+        id: package
+        run: |
+          git archive --format=zip -9 -o code.zip HEAD -- install.sh xray.sh update_geodata.sh src README.md image.png
+          unzip -tq code.zip
+          unpacked="$RUNNER_TEMP/xray-release"
+          unzip -q code.zip -d "$unpacked"
+          version=$(sed -n 's/^is_sh_ver=\(v[0-9][0-9.]*\)$/\1/p' "$unpacked/xray.sh")
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          cp -a tests "$unpacked/tests"
+      - name: Cache pinned Xray runtime and geodata
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .test-tools/v26.3.27
+          key: xray-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/fetch_tools.py') }}
       - name: Fetch official runtimes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tests/fetch_tools.py
-      - name: Check runtime refresh and version policy
-        run: python -m unittest discover -s tests -p 'fetch_tools_checks.py'
-      - name: Check Agent entry and interactive menu
-        run: python -m unittest discover -s tests -p 'panel_agent_checks.py'
-      - name: Isolated regression against Xray 26.3.27 and latest stable Mihomo
+      - name: Test extracted release with Xray 26.3.27 and latest stable Mihomo
         run: |
           cat .test-tools/runtimes.json
-          XRAY_TEST_BIN="$PWD/.test-tools/v26.3.27/xray" MIHOMO_TEST_BIN="$PWD/.test-tools/mihomo" bash tests/regression.sh
+          XRAY_TEST_BIN="$PWD/.test-tools/v26.3.27/xray" MIHOMO_TEST_BIN="$PWD/.test-tools/mihomo" \
+            bash "$RUNNER_TEMP/xray-release/tests/regression.sh"
       - name: Record tested runtime versions
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tested-runtimes
           path: .test-tools/runtimes.json
+          include-hidden-files: true
+          overwrite: true
+      - name: Stage verified release archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: xray-script-release
+          path: code.zip
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
 
   release:
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: xray-script-release
+      queue: max
     permissions:
       contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: xray-script-release
       - name: Publish a new version only
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ needs.validate.outputs.version }}
         run: |
-          version=$(sed -n 's/^is_sh_ver=\(v[0-9][0-9.]*\)$/\1/p' xray.sh)
           [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           gh release list --limit 1000 --json tagName > /tmp/xray-releases.json
           if jq -e --arg version "$version" 'any(.[]; .tagName == $version)' /tmp/xray-releases.json >/dev/null; then
             echo "$version already published; skip."
             exit 0
           fi
-          zip -9r code.zip install.sh xray.sh update_geodata.sh src README.md image.png
+          refs=$(git ls-remote "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$version" "refs/tags/$version^{}")
+          tagged=$(awk '$2 ~ /\^\{\}$/ { peeled=$1; next } { tag=$1 } END { print (peeled ? peeled : tag) }' <<< "$refs")
+          if [[ -n "$tagged" && "$tagged" != "$GITHUB_SHA" ]]; then
+            echo "::error::Existing tag $version points to $tagged, expected $GITHUB_SHA"
+            exit 1
+          fi
           gh release create "$version" code.zip --target "$GITHUB_SHA" --title "$version" --generate-notes
       - name: Retain three releases and preserve Git tags
         env:

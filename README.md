@@ -52,7 +52,7 @@
 
 ## ⚡ 快速开始
 
-v2.7.13 修复中继回退绕过私网拒绝、双栈防火墙部分失败回滚、多个节点共用内部 XHTTP 入口及诊断临时文件残留。更新后打开一次 `xray` 菜单，自动执行 schema v3 事务迁移；先校验再应用，失败恢复原配置，活动服务可能短暂重启。迁移保留 UUID、path 和高级传输参数，内部 tag/socket 变化无需刷新订阅。私网拒绝优先于自定义与中继规则，旧的私网访问规则将不再生效；末级公网直出策略保持原设置。搭配 Panel 使用时更新到 Panel/Agent v1.3.8，并同步、导入当前配置后重新预览部署。
+更新后打开一次 `xray` 菜单，让脚本校验并应用所需的配置迁移。失败会恢复原配置，活动服务可能短暂重启。旧版 NAT 公开入口应更新到 schema v4，并用更新后的 Script 重新导出订阅。搭配 Panel 使用时，在面板导入当前配置后再预览和部署。版本兼容与回归检查见[维护指南](docs/maintenance.md)。
 
 ### 安装命令
 ```bash
@@ -82,3 +82,7 @@ xray agent uninstall
 Agent 卸载默认保留凭据与状态，保留 Xray。面板保存草稿不修改 VPS；点击部署或创建设备授权后才会产生配置任务，设备订阅需等 UUID 部署成功。通过 Script 改动过配置后，先在面板导入当前配置，避免覆盖外部变化。
 
 后续教程：[Cloudflare / Zero Trust](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/cloudflare.md) · [Mihomo 订阅](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/mihomo.md) · [Telegram 告警](https://github.com/Chen017/Xray-Panel/blob/HEAD/docs/telegram.md)。
+
+## 开发与发布
+
+模块职责、隔离测试、发布归档和历史兼容性见[维护指南](docs/maintenance.md)。
