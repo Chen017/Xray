@@ -1,5 +1,5 @@
 #!/bin/bash
-# Exercise the restored v2.5.4 export prompts with real client parsers.
+# Exercise the Mihomo YAML export prompts with real client parsers.
 (
     (
         create() { return 0; }
@@ -12,46 +12,38 @@
         check test ! -e "$TEST_STATE/auto-export"
     ) || exit 1
     for mode in single split vision; do
-        for export_format in yaml link; do
-            _reset_state
-            case "$mode" in
-                split) answers=$'1\n' ;;
-                single) answers=$'2\n1\n' ;;
-                vision) answers=$'3\n1\n' ;;
-            esac
-            if [[ $export_format == yaml ]]; then answers+=1; else answers+=2; fi
-            # The old footer's status is not an export success indicator.
-            info <<< "$answers" > "$scratch/$mode-interactive.txt" || true
-            if [[ $export_format == yaml ]]; then
-                awk '/^- name:/ {show=1} show' "$scratch/$mode-interactive.txt" > "$scratch/$mode.yaml"
-                check grep -q 'short-id: "12345678"' "$scratch/$mode.yaml"
-                check grep -q '^  tfo: true$' "$scratch/$mode.yaml"
-                check grep -q '^  mptcp: true$' "$scratch/$mode.yaml"
-                check grep -q '^  udp: true$' "$scratch/$mode.yaml"
-                if grep -q 'sockopt:' "$scratch/$mode.yaml"; then
-                    echo 'FAIL: ignored Mihomo sockopt block was exported'; exit 1
-                fi
-                if [[ $mode != vision ]]; then
-                    for parameter in 'x-padding-bytes: "100-1000"' 'x-padding-obfs-mode: true' \
-                        'x-padding-placement: queryInHeader' 'x-padding-method: tokenish' \
-                        'x-padding-key: x_padding' 'x-padding-header: Referer' \
-                        'no-grpc-header: true' 'session-placement: path' 'seq-placement: path'; do
-                        check grep -Fqx "    $parameter" "$scratch/$mode.yaml"
-                    done
-                    check grep -q '^      max-concurrency: "16-32"$' "$scratch/$mode.yaml"
-                fi
-                if [[ $mode == split ]]; then
-                    check grep -q '^      client-fingerprint: firefox$' "$scratch/$mode.yaml"
-                    check grep -q '^        max-concurrency: "8-16"$' "$scratch/$mode.yaml"
-                    if grep -qE '^      (x-padding-|no-grpc-header:|session-placement:|seq-placement:)' "$scratch/$mode.yaml"; then
-                        echo 'FAIL: ignored download-settings overrides were exported'; exit 1
-                    fi
-                fi
-            else
-                grep '^vless://' "$scratch/$mode-interactive.txt" > "$scratch/$mode.link"
-                check test -s "$scratch/$mode.link"
+        _reset_state
+        case "$mode" in
+            split) answers=$'1\n1' ;;
+            single) answers=$'1\n2\n1' ;;
+            vision) answers=$'1\n3\n1' ;;
+        esac
+        info <<< "$answers" > "$scratch/$mode-interactive.txt" || true
+        if grep -q '^vless://' "$scratch/$mode-interactive.txt"; then exit 1; fi
+        awk '/^- name:/ {show=1} show' "$scratch/$mode-interactive.txt" > "$scratch/$mode.yaml"
+        check grep -q 'short-id: "12345678"' "$scratch/$mode.yaml"
+        check grep -q '^  tfo: true$' "$scratch/$mode.yaml"
+        check grep -q '^  mptcp: true$' "$scratch/$mode.yaml"
+        check grep -q '^  udp: true$' "$scratch/$mode.yaml"
+        if grep -q 'sockopt:' "$scratch/$mode.yaml"; then
+            echo 'FAIL: ignored Mihomo sockopt block was exported'; exit 1
+        fi
+        if [[ $mode != vision ]]; then
+            for parameter in 'x-padding-bytes: "100-1000"' 'x-padding-obfs-mode: true' \
+                'x-padding-placement: queryInHeader' 'x-padding-method: tokenish' \
+                'x-padding-key: x_padding' 'x-padding-header: Referer' \
+                'no-grpc-header: true' 'session-placement: path' 'seq-placement: path'; do
+                check grep -Fqx "    $parameter" "$scratch/$mode.yaml"
+            done
+            check grep -q '^      max-concurrency: "16-32"$' "$scratch/$mode.yaml"
+        fi
+        if [[ $mode == split ]]; then
+            check grep -q '^      client-fingerprint: firefox$' "$scratch/$mode.yaml"
+            check grep -q '^        max-concurrency: "8-16"$' "$scratch/$mode.yaml"
+            if grep -qE '^      (x-padding-|no-grpc-header:|session-placement:|seq-placement:)' "$scratch/$mode.yaml"; then
+                echo 'FAIL: ignored download-settings overrides were exported'; exit 1
             fi
-        done
+        fi
     done
     check python "$repo/tests/check_exports.py" "$scratch"
 
@@ -64,12 +56,12 @@
 
     touch "$is_conf_dir/is_v6_uplink"
     _reset_state
-    info <<< $'1\n2' > "$scratch/reverse-split.txt" || true
-    check grep -q '^vless://.*@\[2001:db8::10\]:' "$scratch/reverse-split.txt"
+    info <<< $'1\n1' > "$scratch/reverse-split.txt" || true
+    check grep -q '^  server: "2001:db8::10"' "$scratch/reverse-split.txt"
     rm "$is_conf_dir/is_v6_uplink"
     _reset_state
-    info <<< $'3\n2\n2' > "$scratch/ipv6-vision.txt" || true
-    check grep -q '^vless://.*@\[2001:db8::10\]:' "$scratch/ipv6-vision.txt"
+    info <<< $'1\n3\n2' > "$scratch/ipv6-vision.txt" || true
+    check grep -q '^  server: "2001:db8::10"' "$scratch/ipv6-vision.txt"
 
     cat <<'EOF' > "$is_relay_state_file"
 {
@@ -80,8 +72,8 @@
 }
 EOF
     _reset_state
-    info <<< $'2\n3\n1\n2' > "$scratch/relay-export.txt" || true
-    check grep -q '^vless://11111111-1111-4111-8111-111111111111@203.0.113.10:' "$scratch/relay-export.txt"
+    info <<< $'2\n1\n3\n1' > "$scratch/relay-export.txt" || true
+    check grep -q '^  uuid: 11111111-1111-4111-8111-111111111111$' "$scratch/relay-export.txt"
 
     # Multi-landing export test: selecting second landing
     cat <<'EOF' > "$is_relay_state_file"
@@ -111,9 +103,9 @@ EOF
 }
 EOF
     _reset_state
-    info <<< $'3\n3\n1\n2' > "$scratch/relay-export-second.txt" || true
-    check grep -q '^vless://33333333-3333-4333-8333-333333333333@203.0.113.10:' "$scratch/relay-export-second.txt"
-    check grep -q "#$(printf '%s' 'Premium-Landing-日本落地' | jq -Rr @uri)" "$scratch/relay-export-second.txt"
+    info <<< $'3\n1\n3\n1' > "$scratch/relay-export-second.txt" || true
+    check grep -q '^  uuid: 33333333-3333-4333-8333-333333333333$' "$scratch/relay-export-second.txt"
+    check grep -q "Vision-Reality-Landing-日本落地" "$scratch/relay-export-second.txt"
     rm -f "$is_relay_state_file"
 
     # Standalone landing config test without xhttp
@@ -137,7 +129,7 @@ EOF
         check test "$(jq -r '.landing_ip' "$is_relay_state_file")" = "nat-ddns.example.com"
         info_out=$(relay_view_info_landing)
         check grep -q 'nat-ddns.example.com' <<< "$info_out"
-        check grep -q '@nat-ddns.example.com:38888?' <<< "$info_out"
+        check grep -q '"relay":{.*"address":"nat-ddns.example.com","port":38888,' <<< "$info_out"
         # Test firewall degradation when iptables tool is unavailable
         iptables() { return 1; }
         check firewall_sync
@@ -176,19 +168,27 @@ EOF
         check jq -e '.inbounds[1].tag == "relay-entry-v4" and .inbounds[1].port == 28889 and .inbounds[1].protocol == "vless" and .inbounds[1].streamSettings.network == "raw"' "$scratch_landing/conf/99_relay_in.json"
         check jq -e '(.inbounds[1].settings.clients[0].flow | not) and (.inbounds[1].settings.decryption | startswith("mlkem768x25519plus.random.600s."))' "$scratch_landing/conf/99_relay_in.json"
         info_out_entry=$(relay_view_info_landing)
-        check grep -q '&entry_port=38889&entry_uuid=' <<< "$info_out_entry"
+        check grep -q '"nat_ipv4":{.*"port":38889,' <<< "$info_out_entry"
 
-        # 5b. Direct client export on pure landing machine via export_landing_vlessenc (YAML + URI)
-        export_landing_vlessenc <<< $'1\n' > "$scratch_landing/direct-yaml.txt" || true
+        # 5b. Direct client export on pure landing machine via export_landing_vlessenc (YAML)
+        export_landing_vlessenc > "$scratch_landing/direct-yaml.txt" || true
         check grep -q 'NAT-v4-VLESS-Enc' "$scratch_landing/direct-yaml.txt"
         check grep -q 'mlkem768x25519plus.random.0rtt.' "$scratch_landing/direct-yaml.txt"
-        export_landing_vlessenc <<< $'2\n' > "$scratch_landing/direct-link.txt" || true
-        check grep -q '@nat-ddns.example.com:38889?encryption=mlkem768x25519plus.random.0rtt.' "$scratch_landing/direct-link.txt"
 
         # Turn off v4 entry VLESS Encryption via menu
         change <<< $'3\n2\n\n0\n' > "$scratch_landing/change-entry-off.txt" || true
         check test "$(jq -r '.entry_listen_port // 0' "$is_relay_state_file")" = "0"
         check jq -e '.inbounds | length == 1' "$scratch_landing/conf/99_relay_in.json"
+
+        # The public IPv4 endpoint can be deployed without a relay listener.
+        check config_transaction relay_apply_landing '' '' 0 '' nat-ddns.example.com '' 0 28889 38889
+        check jq -e '.role=="landing" and .relay_enabled==false and .entry_listen_port==28889 and (has("listen_port")|not)' "$is_relay_state_file"
+        check jq -e '(.inbounds | length)==1 and .inbounds[0].tag=="relay-entry-v4"' "$is_conf_dir/99_relay_in.json"
+        profile=$(relay_view_info_landing | grep -o '{"version":1.*}')
+        check relay_parse_profile "$profile"
+        check test -z "$parsed_landing_port"
+        check test "$parsed_entry_port" = 38889
+
     )
 
     # Cross-VPS v4 entry separation export test (HK-NAT v4 方案一 + HK v6 split, landing on HK-NAT v4)
@@ -218,45 +218,23 @@ EOF
     relay_menu_entry_port <<< $'40008\n\n\n' >/dev/null
     check test "$(jq -r '.landings[0].entry_port' "$is_relay_state_file")" = "40008"
     for mode in single split vision; do
-        for export_format in yaml link; do
-            _reset_state
-            case "$mode" in
-                split) answers=$'2
-1
-' ;;
-                single) answers=$'2
-2
-1
-' ;;
-                vision) answers=$'2
-3
-1
-' ;;
-            esac
-            if [[ $export_format == yaml ]]; then answers+=1; else answers+=2; fi
-            info <<< "$answers" > "$scratch_cross/$mode-interactive.txt" || true
-            if [[ $export_format == yaml ]]; then
-                awk '/^- name:/ {show=1} show' "$scratch_cross/$mode-interactive.txt" > "$scratch_cross/$mode.yaml"
-                check grep -q 'server: "203.0.113.50"' "$scratch_cross/$mode.yaml"
-                check grep -q 'port: 40008' "$scratch_cross/$mode.yaml"
-                check grep -q 'mlkem768x25519plus.random.0rtt.' "$scratch_cross/$mode.yaml"
-                if [[ $mode == split ]]; then
-                    check grep -q 'server: "2001:db8::10"' "$scratch_cross/$mode.yaml"
-                    check grep -q 'port: 443' "$scratch_cross/$mode.yaml"
-                elif [[ $mode == single ]]; then
-                    check grep -q 'dialer-proxy:' "$scratch_cross/$mode.yaml"
-                fi
-            else
-                if [[ $mode == split || $mode == single ]]; then
-                    check grep -q '单条 VLESS 链接无法保存 NAT 串联' "$scratch_cross/$mode-interactive.txt"
-                    if grep -q '^vless://' "$scratch_cross/$mode-interactive.txt"; then echo 'FAIL: incomplete chained URI exported'; exit 1; fi
-                    : > "$scratch_cross/$mode.link"
-                else
-                    grep '^vless://' "$scratch_cross/$mode-interactive.txt" > "$scratch_cross/$mode.link"
-                    check grep -q '^vless://66666666-6666-4666-8666-666666666666@203.0.113.50:40008?encryption=mlkem768x25519plus.random.0rtt.' "$scratch_cross/$mode.link"
-                fi
-            fi
-        done
+        _reset_state
+        case "$mode" in
+            split) answers=$'2\n1\n1' ;;
+            single) answers=$'2\n1\n2\n1' ;;
+            vision) answers=$'2\n1\n3\n1' ;;
+        esac
+        info <<< "$answers" > "$scratch_cross/$mode-interactive.txt" || true
+        awk '/^- name:/ {show=1} show' "$scratch_cross/$mode-interactive.txt" > "$scratch_cross/$mode.yaml"
+        check grep -q 'server: "203.0.113.50"' "$scratch_cross/$mode.yaml"
+        check grep -q 'port: 40008' "$scratch_cross/$mode.yaml"
+        check grep -q 'mlkem768x25519plus.random.0rtt.' "$scratch_cross/$mode.yaml"
+        if [[ $mode == split ]]; then
+            check grep -q 'server: "2001:db8::10"' "$scratch_cross/$mode.yaml"
+            check grep -q 'port: 443' "$scratch_cross/$mode.yaml"
+        elif [[ $mode == single ]]; then
+            check grep -q 'dialer-proxy:' "$scratch_cross/$mode.yaml"
+        fi
     done
     check python "$repo/tests/check_exports.py" "$scratch_cross"
 
@@ -264,10 +242,17 @@ EOF
     relay_menu_entry_port <<< $'0\n' >/dev/null
     check test "$(jq -r '.landings[0].entry_port // 0' "$is_relay_state_file")" = "0"
     _reset_state
-    info <<< $'2
-1
-2' > "$scratch_cross/local-v4-link.txt" || true
-    check grep -q '^vless://55555555-5555-4555-8555-555555555555@203.0.113.10:443?' "$scratch_cross/local-v4-link.txt"
+    info <<< $'2\n1\n1' > "$scratch_cross/local-v4-yaml.txt" || true
+    check grep -q '^  uuid: 55555555-5555-4555-8555-555555555555$' "$scratch_cross/local-v4-yaml.txt"
+    check grep -q '^  server: "203.0.113.10"$' "$scratch_cross/local-v4-yaml.txt"
+
+    # A standalone NAT profile can be selected even for the direct exit.
+    profile=$(relay_build_profile '' 203.0.113.50 0 '' 40008 66666666-6666-4666-8666-666666666666 'mlkem768x25519plus.random.0rtt.100-111-1111.75-0-111.50-0-3333.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
+    _reset_state
+    info <<< "$(printf '1\n2\n%s\n3\n1' "$profile")" > "$scratch_cross/direct-nat-vision.txt" || true
+    check grep -q '^  dialer-proxy:' "$scratch_cross/direct-nat-vision.txt"
+    check grep -q '^  flow: xtls-rprx-vision$' "$scratch_cross/direct-nat-vision.txt"
+    check grep -q '^  server: "203.0.113.10"$' "$scratch_cross/direct-nat-vision.txt"
     rm -f "$is_relay_state_file"
 ) || exit 1
-pass 'exports cover all modes and supported formats, NAT split, IPv6 and landings; incomplete chained URIs are rejected'
+pass 'Mihomo exports cover IPv6, direct and landing exits, NAT split and standalone NAT Vision'

@@ -193,19 +193,18 @@ if relay_validate_host "invalid host" || relay_validate_host "999.999.999.999" |
     echo "FAIL: invalid host incorrectly accepted"
     exit 1
 fi
-domain_test_link=$(relay_build_link "$transport_uuid" "nat.example.com" 30005 "$vlessenc_encryption")
-check relay_parse_link "$domain_test_link"
+domain_test_profile=$(relay_build_profile "$transport_uuid" "nat.example.com" 30005 "$vlessenc_encryption")
+check relay_parse_profile "$domain_test_profile"
 check test "$parsed_landing_ip" = "nat.example.com"
 check test "$parsed_landing_port" = "30005"
 check test -z "$parsed_entry_port"
-entry_test_link=$(relay_build_link "$transport_uuid" "nat.example.com" 30005 "$vlessenc_encryption" 40005 "$entry_test_uuid" "$entry_vlessenc_encryption")
-check grep -q '&entry_port=40005&entry_uuid='"$entry_test_uuid"'&entry_enc=' <<< "$entry_test_link"
-check relay_parse_link "$entry_test_link"
+entry_test_profile=$(relay_build_profile "$transport_uuid" "nat.example.com" 30005 "$vlessenc_encryption" 40005 "$entry_test_uuid" "$entry_vlessenc_encryption")
+check relay_parse_profile "$entry_test_profile"
 check test "$parsed_entry_port" = "40005"
 check test "$parsed_entry_uuid" = "$entry_test_uuid"
 check test "$parsed_entry_encryption" = "$entry_vlessenc_encryption"
-if relay_parse_link "${domain_test_link%#Xray-Relay}&entry_port=70000#Xray-Relay" || relay_parse_link "${domain_test_link%#Xray-Relay}&entry_port=0#Xray-Relay"; then
-    echo "FAIL: invalid entry_port accepted by relay_parse_link"
+if relay_parse_profile "$(jq -c '.nat_ipv4.port=70000' <<< "$entry_test_profile")" || relay_parse_profile "$(jq -c '.nat_ipv4.port=0' <<< "$entry_test_profile")"; then
+    echo "FAIL: invalid entry_port accepted by relay_parse_profile"
     exit 1
 fi
 

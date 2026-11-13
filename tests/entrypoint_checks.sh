@@ -49,8 +49,8 @@ ENV
     } > "$entry_root/environment.sh"
     for launch in 1 2; do
         check env BASH_ENV="$entry_root/environment.sh" bash "$entry_root/xray.sh" \
-            <<< $'2\n1\n2\n\n0' > "$scratch/entrypoint-$launch.txt"
-        check grep -q '^vless://' "$scratch/entrypoint-$launch.txt"
+            <<< $'2\n1\n1\n\n0' > "$scratch/entrypoint-$launch.txt"
+        check grep -q '^- name:' "$scratch/entrypoint-$launch.txt"
         check grep -q '国内连通: .*✓' "$scratch/entrypoint-$launch.txt"
         check grep -q 'Cloudflare: .*✓' "$scratch/entrypoint-$launch.txt"
         check test "$(wc -l < "$TEST_STATE/entry-tcp.calls")" = "$launch"

@@ -28,13 +28,13 @@
   - 支持增加、编辑、删除与排序自定义分流规则（支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`，动作支持放行 `direct`、IPv4 解析 `direct-v4`、IPv6 解析 `direct-v6` 与阻止 `block`）。
   - 支持一键切换双栈分离方向（v4上行/v6下行 或 v6上行/v4下行）。
   - 支持切换出站 IP 策略（IPv4 / IPv6 解析、双栈解析优先 / 双栈连接竞速），适配不同双栈或纯 IPv6 机器需求。
-  - 支持选择 XHTTP 双栈分离、单栈 XHTTP 或 Vision Reality 客户端连接方案，输出对应的 Mihomo YAML 或 VLESS 分享链接。
+  - 支持选择 XHTTP 双栈分离、单栈 XHTTP 或 Vision Reality 客户端连接方案，输出对应的 Mihomo YAML。
 - 🔗 线路 / 落地互联与跨机 v4+v6 分离：支持将优质线路 VPS 与落地 VPS 互联，采用内部专用的 VLESS RAW + Vision + VLESS 加密传输。
   - **线路机**：`客户端 → 线路机 → 落地机 → Internet`；**一台线路机支持绑定多台落地机**，并为每台落地机设置备注别名与独立专属客户端 UUID，导出客户端配置时可自由选择出口落地。
   - **落地机**：支持独立普通节点模式，亦支持**纯落地机模式**（专为 NAT / LXC 容器设计，无需 XHTTP 与标准 443 端口，无防火墙权限时自动跳过 iptables 限制，支持自定义公网 IP 与内外网映射端口）。
   - **NAT v4 方案一过墙（`VLESS Encryption random + 1-RTT Padding`）+ 原有双机互联落地**：香港线路机与 NAT 落地机之间 **保留原有的 `VLESS RAW + Vision + VLESS Encryption` 互联方式**；当客户端经由 NAT v4 高位端口过墙时，可在落地机同一个 Xray 进程内开启 **方案一过墙入口**（`VLESS + RAW + mlkem768x25519plus.random` 全随机流 + `100-111-1111.75-0-111.50-0-3333` 1-RTT 握手随机长度与时延填充），无需在高位端口运行 REALITY，支持直连落地或作为线路机 v4 链式过墙前置（`dialer-proxy`）。公开入口保留零 RTT，客户端关闭入口 TFO；上下行独立拨号需要 [定制 Mihomo](https://github.com/Chen017/mihomo/releases/latest)，下载配置使用独立的 `download-settings.dialer-proxy`。
-  - **创建与导入**：先在落地机配置中继（支持直接开启或后续在互联菜单开启 NAT v4 方案一过墙入口），生成中继链接；再在线路机进入 `4. 线路 / 落地互联` 导入链接（或通过菜单 `6. 设置落地机 NAT v4 方案一过墙` 粘贴中继链接动态同步/关闭）。
-  - **客户端导出**：支持在纯落地机主菜单 `2. 查看客户端配置` 直接导出 NAT v4 方案一客户端配置，亦支持在线路机进入 `2. 查看客户端配置` 选择对应落地出口，一键导出包含 NAT v4 方案一过墙与线路机 v6 REALITY/XHTTP（经原有互联落地）的完整 Mihomo YAML；单条 VLESS 分享链接仅用于直连入口，无法表达链式分路。
+  - **创建与导入**：在 NAT 主机的「线路 / 落地互联」菜单开启公开 IPv4 入口，可同时配置互联。将输出的 JSON 配置复制到线路机。互联配置用于添加落地出口，公开入口配置可在导出 Mihomo YAML 时单独选择。
+  - **客户端导出**：先选本机直出或落地出口，再选 IPv4 直连、已配置 NAT 入口或粘贴其他 NAT 入口的 JSON。双栈分离需要支持独立下行拨号的定制 Mihomo。纯 NAT 主机可直接导出自己的入口节点。
 - 运维支持：
   - 合并双端配置文件，提供服务端 JSON 配置预览。
   - 支持查看综合日志（混合输出 access.log 与 error.log）、修改日志等级、配置校验（与启动服务分开）。
